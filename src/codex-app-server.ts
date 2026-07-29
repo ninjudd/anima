@@ -305,6 +305,9 @@ export class CodexAppServerClient {
     if (this.closed) return;
     if (!this.closing) {
       this.closing = true;
+      this.fail(
+        new CodexAppServerError('Codex AppServer connection is closing.'),
+      );
       this.child.stdin.end();
     }
 

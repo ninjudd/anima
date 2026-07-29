@@ -128,3 +128,26 @@ test('fails promptly when the Codex executable is unavailable', async () => {
     await temporary.cleanup();
   }
 });
+
+test('rejects pending requests when the client closes', async () => {
+  const temporary = await temporaryDirectory();
+  const client = await connectCodexAppServer({
+    command: process.execPath,
+    arguments: [FAKE_APP_SERVER, `${temporary.path}/requests.jsonl`],
+    cwd: temporary.path,
+  });
+  try {
+    const rejection = assert.rejects(
+      client.request('test/hang'),
+      (error: unknown) =>
+        error instanceof CodexAppServerError &&
+        error.message === 'Codex AppServer connection is closing.',
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    await client.close();
+    await rejection;
+  } finally {
+    await client.close();
+    await temporary.cleanup();
+  }
+});

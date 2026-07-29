@@ -62,6 +62,7 @@ for await (const line of lines) {
     });
     continue;
   }
+  if (message.method === 'test/hang') continue;
   await respond({
     id: message.id,
     error: { code: -32601, message: `unknown method ${message.method}` },
