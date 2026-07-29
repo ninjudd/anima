@@ -146,6 +146,18 @@ function messageKey(role: 'user' | 'assistant', text: string): string {
   return `${role}\0${text}`;
 }
 
+function assistantMessageText(
+  block: Record<string, unknown>,
+): string | undefined {
+  if (block.type === 'output_text' && typeof block.text === 'string') {
+    return block.text;
+  }
+  if (block.type === 'refusal' && typeof block.refusal === 'string') {
+    return block.refusal;
+  }
+  return undefined;
+}
+
 interface ResponseMessageOccurrence {
   key: string;
   record: number;
@@ -162,15 +174,16 @@ function responseMessageOccurrences(
     const payload = objectValue(record.value.payload);
     if (payload?.type !== 'message') continue;
     const role = stringValue(payload.role);
-    if (role !== 'user' && role !== 'assistant') continue;
-    const expectedType = role === 'user' ? 'input_text' : 'output_text';
+    if (role !== 'assistant') continue;
     const content = Array.isArray(payload.content) ? payload.content : [];
     for (const item of content) {
       const block = objectValue(item);
-      if (block?.type !== expectedType || typeof block.text !== 'string') continue;
+      if (block === undefined) continue;
+      const text = assistantMessageText(block);
+      if (text === undefined) continue;
       const timestamp = stringValue(record.value.timestamp);
       occurrences.push({
-        key: messageKey(role, block.text),
+        key: messageKey(role, text),
         record: record.position.record,
         matched: false,
         ...(timestamp !== undefined ? { timestamp } : {}),
@@ -222,17 +235,19 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
 
       if (payloadType === 'message') {
         const role = stringValue(payload.role);
-        if (role !== 'user' && role !== 'assistant') continue;
+        // Codex also stores injected bootstrap context as user response items.
+        // Visible user turns are sourced from event_msg records instead.
+        if (role !== 'assistant') continue;
         const content = Array.isArray(payload.content) ? payload.content : [];
         for (const [blockIndex, item] of content.entries()) {
           const block = objectValue(item);
           if (block === undefined) continue;
-          const expectedType = role === 'user' ? 'input_text' : 'output_text';
-          if (block.type !== expectedType || typeof block.text !== 'string') continue;
+          const text = assistantMessageText(block);
+          if (text === undefined) continue;
           candidates.push({
             kind: 'message',
             role,
-            text: block.text,
+            text,
             ...positionFor(blockIndex),
             ...(nativeEventId !== undefined
               ? { native_event_id: nativeEventId }
@@ -271,6 +286,24 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
           ...(callId !== undefined ? { call_id: callId } : {}),
           ...(nativeOutputId !== undefined
             ? { native_event_id: nativeOutputId }
+            : {}),
+        });
+      } else if (payloadType === 'web_search_call') {
+        const status = stringValue(payload.status);
+        const activity: Record<string, unknown> = {};
+        if (payload.action !== undefined) activity.action = payload.action;
+        if (payload.query !== undefined) activity.query = payload.query;
+        if (status !== undefined) activity.status = status;
+        candidates.push({
+          kind: 'tool_call',
+          tool_name: 'web_search',
+          input: activity,
+          ...positionFor(0),
+          ...(nativeEventId !== undefined
+            ? {
+                call_id: nativeEventId,
+                native_event_id: nativeEventId,
+              }
             : {}),
         });
       } else if (payloadType === 'local_shell_call') {

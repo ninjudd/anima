@@ -32,10 +32,12 @@ test('discovers and normalizes canonical Codex response items', async () => {
         'message',
         'message',
         'message',
+        'message',
         'tool_call',
         'tool_result',
         'tool_call',
         'tool_result',
+        'tool_call',
         'tool_call',
         'tool_result',
         'message',
@@ -54,7 +56,14 @@ test('discovers and normalizes canonical Codex response items', async () => {
       userMessages.filter((event) => event.content[0]?.text === 'Build the reader.')
         .length,
       1,
-      'event_msg duplicates should be ignored when response items exist',
+      'visible user messages should be sourced once from event_msg records',
+    );
+    assert.equal(
+      userMessages.some(
+        (event) => event.content[0]?.text === 'Injected AGENTS context.',
+      ),
+      false,
+      'user response items without visible event messages should be excluded',
     );
 
     const repeated = userMessages.filter(
@@ -92,6 +101,29 @@ test('discovers and normalizes canonical Codex response items', async () => {
       true,
       'local shell outputs should be preserved',
     );
+    assert.equal(
+      session.events.some(
+        (event) =>
+          event.kind === 'message' &&
+          event.role === 'assistant' &&
+          event.content[0]?.text === 'I cannot perform that action.',
+      ),
+      true,
+      'assistant refusal blocks should be preserved',
+    );
+    const webSearch = session.events.find(
+      (event) =>
+        event.kind === 'tool_call' && event.tool_name === 'web_search',
+    );
+    assert(webSearch?.kind === 'tool_call');
+    assert.equal(webSearch.call_id, 'web-1');
+    assert.deepEqual(webSearch.input, {
+      action: {
+        type: 'search',
+        query: 'anima context transfer',
+      },
+      status: 'completed',
+    });
     const customOutput = session.events.find(
       (event) => event.kind === 'tool_result' && event.call_id === 'call-2',
     );
