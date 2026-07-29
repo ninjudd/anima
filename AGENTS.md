@@ -1,5 +1,12 @@
 # Repository Instructions
 
+## Pull request state
+
+Open pull requests ready for review by default, even when they contain an
+approved work-in-progress slice. Use draft status only when the pull request is
+genuinely not ready for review and we intentionally do not want it reviewed yet.
+Do not use draft status merely because more work is planned.
+
 ## Codex automated reviews
 
 When a pull request review is requested with a top-level `@codex review`
