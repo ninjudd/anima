@@ -38,5 +38,15 @@ When you fix a finding created by the Codex reviewer:
    after a later push.
 5. Re-fetch thread-aware review state and verify `isResolved: true`.
 
+Do not automatically request another full Codex review after every fix batch.
+Make a judgment call based on the severity of the bugs fixed and the scope and
+blast radius of the changes:
+
+- Request re-review for P0/P1 fixes, broad refactors, protocol or schema
+  changes, or changes spanning multiple interacting components.
+- Decide case by case for P2 fixes.
+- Normally skip re-review for narrow, well-tested P2/P3 fixes that do not
+  introduce significant new behavior.
+
 Never resolve a finding that was not fixed. Explain the disposition in the
 thread and leave it open.
