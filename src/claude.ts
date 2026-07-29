@@ -175,6 +175,11 @@ function contentText(value: unknown): string {
       })
       .filter((item): item is string => item !== undefined);
     if (text.length > 0) return text.join('\n');
+    return '[non-text tool result omitted]';
+  }
+  const block = objectValue(value);
+  if (block?.type === 'image' || block?.type === 'image_reference') {
+    return '[non-text tool result omitted]';
   }
   return stableStringify(value);
 }
@@ -201,6 +206,20 @@ function claudeCandidates(records: JsonlRecord[]): EventCandidate[] {
         : {}),
       ...(timestamp !== undefined ? { timestamp } : {}),
     };
+
+    if (value.isCompactSummary === true) {
+      const summary = contentText(content);
+      if (summary !== '') {
+        candidates.push({
+          kind: 'context_note',
+          label: 'Claude compaction summary',
+          text: summary,
+          native_position: { record: record.position.record, block: 0 },
+          ...origin,
+        });
+      }
+      continue;
+    }
 
     if (typeof content === 'string') {
       if (content !== '') {

@@ -34,11 +34,16 @@ export async function readJsonl(path: string): Promise<JsonlReadResult> {
   let byteOffset = 0;
   let firstLine = true;
 
-  function consume(rawLine: string): void {
-    recordNumber += 1;
+  function normalize(rawLine: string): string {
     let line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (firstLine && line.startsWith('\uFEFF')) line = line.slice(1);
     firstLine = false;
+    return line;
+  }
+
+  function consume(rawLine: string): void {
+    recordNumber += 1;
+    const line = normalize(rawLine);
 
     const lineBytes = Buffer.byteLength(rawLine, 'utf8') + 1;
     if (line.trim() !== '') {
@@ -62,7 +67,7 @@ export async function readJsonl(path: string): Promise<JsonlReadResult> {
 
   if (pending !== '') {
     recordNumber += 1;
-    const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
+    const line = normalize(pending);
     if (line.trim() !== '') {
       try {
         records.push({

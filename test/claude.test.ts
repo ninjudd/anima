@@ -28,7 +28,15 @@ test('discovers and normalizes the active Claude branch', async () => {
     assert.equal(session.title, 'Build offline readers');
     assert.deepEqual(
       session.events.map((event) => event.kind),
-      ['message', 'message', 'tool_call', 'tool_result', 'message'],
+      [
+        'message',
+        'message',
+        'tool_call',
+        'tool_result',
+        'tool_result',
+        'message',
+        'context_note',
+      ],
     );
     assert.equal(
       session.events.some(
@@ -45,6 +53,28 @@ test('discovers and normalizes the active Claude branch', async () => {
           event.content.some((block) => block.text.includes('Sidechain')),
       ),
       false,
+    );
+    const imageResult = session.events.find(
+      (event) => event.kind === 'tool_result' && event.call_id === 'call-image',
+    );
+    assert(imageResult?.kind === 'tool_result');
+    assert.equal(imageResult.output, '[non-text tool result omitted]');
+    assert.equal(JSON.stringify(session).includes('excluded-binary-data'), false);
+
+    const compaction = session.events.find(
+      (event) => event.kind === 'context_note',
+    );
+    assert(compaction?.kind === 'context_note');
+    assert.equal(compaction.label, 'Claude compaction summary');
+    assert.equal(compaction.content[0]?.text, 'Earlier work was summarized.');
+    assert.equal(
+      session.events.some(
+        (event) =>
+          event.kind === 'message' &&
+          event.content[0]?.text === 'Earlier work was summarized.',
+      ),
+      false,
+      'compact summaries must not be live user messages',
     );
     assert.equal(session.events[0]?.parent_event_id, null);
     for (let index = 1; index < session.events.length; index += 1) {

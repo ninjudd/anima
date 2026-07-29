@@ -25,6 +25,21 @@ test('accepts a valid final JSON record without a trailing newline', async () =>
   }
 });
 
+test('accepts a BOM-prefixed first record without a trailing newline', async () => {
+  const temporary = await temporaryDirectory();
+  try {
+    const transcript = path.join(temporary.path, 'bom.jsonl');
+    await writeFile(transcript, '\uFEFF{"type":"only"}');
+
+    const result = await readJsonl(transcript);
+
+    assert.equal(result.records[0]?.value.type, 'only');
+    assert.deepEqual(result.warnings, []);
+  } finally {
+    await temporary.cleanup();
+  }
+});
+
 test('warns and ignores an invalid final fragment', async () => {
   const temporary = await temporaryDirectory();
   try {

@@ -91,7 +91,18 @@ function metadata(records: JsonlRecord[], nativePath: string) {
       `Codex rollout ${nativePath} has no session_meta record.`,
     );
   }
-  const id = stringValue(payload.id) ?? stringValue(payload.session_id);
+  const primaryId = stringValue(payload.id);
+  const sessionId = stringValue(payload.session_id);
+  if (
+    primaryId !== undefined &&
+    sessionId !== undefined &&
+    primaryId !== sessionId
+  ) {
+    throw new SessionFormatError(
+      `Codex rollout ${nativePath} has conflicting metadata IDs ${primaryId} and ${sessionId}.`,
+    );
+  }
+  const id = primaryId ?? sessionId;
   const cwd = stringValue(payload.cwd);
   if (id === undefined || cwd === undefined) {
     throw new SessionFormatError(
@@ -112,6 +123,23 @@ function parseArguments(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+function outputText(value: unknown): unknown {
+  if (!Array.isArray(value)) return value ?? null;
+
+  const text = value
+    .map((item) => {
+      const block = objectValue(item);
+      return (block?.type === 'input_text' ||
+        block?.type === 'output_text' ||
+        block?.type === 'text') &&
+        typeof block.text === 'string'
+        ? block.text
+        : undefined;
+    })
+    .filter((item): item is string => item !== undefined);
+  return text.length > 0 ? text.join('\n') : '[non-text tool output omitted]';
 }
 
 function messageKey(role: 'user' | 'assistant', text: string): string {
@@ -234,14 +262,15 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
         payloadType === 'local_shell_call_output'
       ) {
         const callId = stringValue(payload.call_id);
+        const nativeOutputId = nativeEventId ?? callId;
         candidates.push({
           kind: 'tool_result',
-          output: payload.output ?? null,
+          output: outputText(payload.output),
           is_error: false,
           ...positionFor(0),
           ...(callId !== undefined ? { call_id: callId } : {}),
-          ...(nativeEventId !== undefined
-            ? { native_event_id: nativeEventId }
+          ...(nativeOutputId !== undefined
+            ? { native_event_id: nativeOutputId }
             : {}),
         });
       } else if (payloadType === 'local_shell_call') {
