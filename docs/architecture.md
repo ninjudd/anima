@@ -368,18 +368,50 @@ Encoders render tool events as inert imported activity. The target model must
 never interpret an imported tool call as awaiting execution or an imported tool
 result as satisfying a current native call ID.
 
-By default, large results are retained only in Anima's local canonical store and
-represented in the target projection by a size and digest. `--include-tool-output`
-allows bounded output to be included.
+By default, tool-result content is bounded in both Anima's local canonical store
+and target projections.
+
+The default limits are:
+
+- Canonical storage retains at most 64 KiB of text for each tool result.
+- Target projections include at most 8 KiB of text for each tool result.
+- Output beyond the applicable limit is represented by its original size,
+  SHA-256 digest, and native source location.
+- Error output uses the same 64 KiB canonical limit because failures often
+  contain the most useful recovery context.
+
+`--include-tool-output` raises the target projection limit to the canonical
+64 KiB limit. It never enables unbounded copying.
 
 ### 9.5 Context and compaction notes
 
-Plaintext native compaction summaries may become `context_note` events labeled
-with their provider and purpose. Encrypted compaction payloads, hidden thinking,
-and reasoning content are excluded.
+Plaintext native compaction summaries become `context_note` events only when they
+represent the source runtime's effective compaction boundary or when the
+uncompacted history would exceed the target context budget. Encrypted compaction
+payloads, hidden thinking, and reasoning content are excluded.
+
+An encoder must not inject both a summary and every raw turn covered by that
+summary into model-visible target history. Doing so wastes context and can
+present conflicting versions of the same conversation.
 
 A context note is never represented as a user instruction. Encoders should use
 an inert assistant-visible annotation or provider-supported metadata.
+
+### 9.6 Canonical archive and effective context
+
+Anima distinguishes the complete canonical archive from the effective context
+projected into a target:
+
+- The canonical archive retains every canonical event allowed by the local
+  storage policy.
+- Effective context is a deterministic projection view containing the latest
+  applicable compaction summary, events after its boundary, and any earlier
+  events that remain within the target budget without duplicating summarized
+  material.
+
+Native encoders consume effective context. Round-trip lineage and recovery use
+the canonical archive. Building effective context is deterministic and never
+requires a model call.
 
 ## 10. Lineage and round trips
 
@@ -458,6 +490,19 @@ The new thread must be persistent before Anima reports success. If injection
 succeeds only in memory and no durable rollout can be found, the transfer fails
 without launching.
 
+Codex history injection is the first compatibility spike and gates this encoder.
+For every supported Codex version, tests must verify that injected messages:
+
+- Remain after the bootstrap AppServer exits.
+- Are present in the next model request after `codex resume`.
+- Render acceptably in the supported interactive client.
+- Preserve user and assistant roles and ordering.
+
+Model-visible persistence is required. Terminal rendering fidelity is recorded
+as a version capability. If injected items do not render as usable history,
+writing a versioned native Codex rollout is a separate design decision rather
+than an automatic fallback.
+
 Anima speaks the small AppServer JSON-RPC protocol directly. It does not depend
 on the broader agent SDK.
 
@@ -482,6 +527,19 @@ The encoder should:
 
 The encoder must never overwrite an existing path. If the generated UUID
 collides, it generates another.
+
+The encoder uses a complete, known-good transcript template for each supported
+Claude Code version instead of trying to write a theoretical minimum record.
+Expected template fields include `type`, `uuid`, `parentUuid`, `sessionId`,
+`cwd`, `timestamp`, and `message`, plus any version-specific fields needed for
+resume and rendering.
+
+Each template is validated in an isolated Claude configuration root with a
+black-box compatibility test covering:
+
+- Successful `claude --resume`.
+- Correct user and assistant history rendering.
+- Correct model-visible context on the next turn.
 
 Because this uses an internal persistence format, the encoder is enabled only
 for tested Claude Code versions unless `--force-version` is supplied.
@@ -557,6 +615,25 @@ The working directory defaults to the source session's recorded `cwd`. If it no
 longer exists, Anima stops and asks for `--cwd`; silently substituting the
 caller's current directory could expose the wrong repository to the target.
 
+### 15.1 Generated session names
+
+Generated sessions use the logical conversation title, source provider, and a
+six-character lineage identifier:
+
+```text
+<logical title> · via Anima/<source> · <lineage-short-id>
+```
+
+For example:
+
+```text
+Fix session recovery · via Anima/Claude · 7K3M2P
+```
+
+The logical title remains stable across round trips. The source provider changes
+at each transfer. Full native session IDs remain in Anima metadata and are not
+included in session-picker titles.
+
 ## 16. Versioning and compatibility
 
 ### 16.1 Adapter interface
@@ -594,6 +671,8 @@ Fixtures should cover:
 - Compaction
 - Claude branches and sidechains
 - Codex duplicate event and response records
+- Codex injected-history persistence, model visibility, and terminal rendering
+- Claude generated-history resume, model visibility, and terminal rendering
 - Histories generated by Anima
 - A full Claude-to-Codex-to-Claude round trip
 
@@ -618,7 +697,10 @@ Default policy:
 - Exclude hidden thinking, reasoning, and encrypted payloads.
 - Never copy credentials or provider auth files.
 - Never replay native tool calls.
-- Omit or truncate large tool results from the target projection.
+- Retain at most 64 KiB per tool result in canonical storage.
+- Include at most 8 KiB per tool result in target projections by default.
+- Represent omitted tool output with its size, digest, and native source
+  location.
 - Keep the complete canonical store local with owner-only permissions.
 - Emit no telemetry.
 
@@ -671,9 +753,12 @@ ambiguous, stop rather than duplicate or discard conversation history.
 
 ## 19. Implementation constraints
 
-The initial implementation should be a small standalone CLI with no third-party
-runtime dependencies. It may reuse protocol knowledge from the existing
-agent-sdk project, but Anima must not require that package.
+The initial implementation is a standalone TypeScript CLI compiled to ESM for
+Node.js 20 or newer. It has no third-party runtime dependencies. TypeScript may
+be a development dependency, and tests use the built-in `node:test` runner.
+
+Anima may reuse protocol knowledge from the existing agent-sdk project, but it
+must not require that package.
 
 The implementation language and distribution format should satisfy:
 
@@ -688,6 +773,14 @@ The implementation language and distribution format should satisfy:
 No model API SDK is required.
 
 ## 20. Initial delivery sequence
+
+### Phase 0: Native compatibility probes
+
+- Verify Codex injected-history durability, model visibility, and terminal
+  rendering.
+- Determine and capture a known-good Claude transcript template.
+- Exercise generated Claude history in an isolated configuration root.
+- Record provider-version capabilities before committing to either encoder.
 
 ### Phase 1: Offline readers
 
@@ -722,17 +815,21 @@ No model API SDK is required.
 - Tool-output policy and redaction
 - Packaging and installation
 
-## 21. Open questions
+## 21. Initial decisions
 
-1. Should Anima project plaintext native compaction summaries by default, or only
-   when preceding raw turns have been compacted away?
-2. Which Claude transcript fields are the minimum stable set required for both
-   resume behavior and correct terminal history rendering?
-3. Does Codex render injected role messages as complete historical turns in all
-   supported clients, or only include them in model-visible history?
-4. Should canonical storage retain full tool results by default, or require an
-   opt-in because they frequently contain secrets and large outputs?
-5. Should the first implementation target Node.js with zero package
-   dependencies, or a compiled language for a single-binary install?
-6. How should Anima name generated sessions so their source and lineage are
-   apparent in each runtime's session picker?
+1. Project a plaintext compaction summary only when it is the effective source
+   boundary or is needed to fit the target budget. Do not also project the raw
+   turns it covers.
+2. Generate Claude histories from versioned, known-good templates. Determine
+   required fields with isolated black-box tests rather than minimizing records
+   in production.
+3. Treat Codex model-visible persistence as mandatory and terminal rendering as
+   a tested version capability. Run this compatibility spike before building the
+   full encoder.
+4. Cap tool results at 64 KiB in canonical storage and 8 KiB in target
+   projections. Preserve size, digest, and native source location when content
+   is omitted.
+5. Build the first implementation in TypeScript for Node.js 20 or newer with no
+   third-party runtime dependencies.
+6. Name generated sessions
+   `<logical title> · via Anima/<source> · <lineage-short-id>`.
