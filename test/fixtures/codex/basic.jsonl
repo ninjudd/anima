@@ -8,7 +8,7 @@
 {"timestamp":"2026-07-29T11:00:03Z","type":"response_item","payload":{"type":"function_call","id":"tool-a1","name":"read_file","arguments":"{\"path\":\"README.md\"}","call_id":"call-1"}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"function_call_output","id":"tool-r1","call_id":"call-1","output":"README contents"}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"custom_tool_call","id":"custom-a1","name":"search","input":"{\"query\":\"reader\"}","call_id":"call-2"}}
-{"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-2","output":[{"type":"input_text","text":"first result"},{"type":"input_image","image_url":"data:image/png;base64,excluded"},{"type":"input_text","text":"second result"}]}}
+{"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-2","status":"failed","output":[{"type":"input_text","text":"first result"},{"type":"input_image","image_url":"data:image/png;base64,excluded"},{"type":"input_text","text":"second result"}]}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"web_search_call","id":"web-1","status":"completed","action":{"type":"search","query":"anima context transfer"}}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"local_shell_call","id":"shell-a1","call_id":"shell-1","action":{"type":"exec","command":"git status"}}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"local_shell_call_output","id":"shell-r1","call_id":"shell-1","output":"working tree clean"}}
@@ -19,4 +19,5 @@
 {"timestamp":"2026-07-29T11:00:06Z","type":"event_msg","payload":{"type":"agent_message","message":"Legacy-only status message."}}
 {"timestamp":"2026-07-29T11:00:06Z","type":"event_msg","payload":{"type":"agent_message","message":"Repeated status."}}
 {"timestamp":"2026-07-29T11:00:07Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"hidden"}],"encrypted_content":"secret"}}
+{"timestamp":"2026-07-29T11:00:08Z","type":"compacted","payload":{"message":"Earlier Codex work was summarized.","replacement_history":[],"window_number":2,"previous_window_id":"window-1","window_id":"window-2"}}
 {"timestamp":"2026-07-29T11:00:08Z","type":"turn_context","payload":{"cwd":"/work/anima","summary":"auto"}}

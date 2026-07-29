@@ -61,6 +61,15 @@ test('discovers and normalizes the active Claude branch', async () => {
     assert.equal(imageResult.output, '[non-text tool result omitted]');
     assert.equal(JSON.stringify(session).includes('excluded-binary-data'), false);
 
+    const toolCall = session.events.find(
+      (event) => event.kind === 'tool_call' && event.call_id === 'call-1',
+    );
+    assert.equal(toolCall?.origin.native_event_id, 'call-1');
+    const toolResult = session.events.find(
+      (event) => event.kind === 'tool_result' && event.call_id === 'call-1',
+    );
+    assert.equal(toolResult?.origin.native_event_id, 'call-1');
+
     const compaction = session.events.find(
       (event) => event.kind === 'context_note',
     );

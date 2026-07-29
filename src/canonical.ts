@@ -81,7 +81,9 @@ function eventIdentity(
         }
       : {
           id: candidate.native_event_id,
-          block: candidate.native_position.block,
+          ...(candidate.kind === 'message'
+            ? { block: candidate.native_position.block }
+            : {}),
         };
 
   let payload: unknown;

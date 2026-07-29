@@ -142,6 +142,26 @@ function outputText(value: unknown): unknown {
   return text.length > 0 ? text.join('\n') : '[non-text tool output omitted]';
 }
 
+function toolResultIsError(payload: Record<string, unknown>): boolean {
+  if (payload.is_error === true || payload.success === false) return true;
+  if (
+    payload.error !== undefined &&
+    payload.error !== null &&
+    payload.error !== false
+  ) {
+    return true;
+  }
+  const status = stringValue(payload.status)?.toLowerCase();
+  return (
+    status === 'failed' ||
+    status === 'error' ||
+    status === 'errored' ||
+    status === 'incomplete' ||
+    status === 'cancelled' ||
+    status === 'canceled'
+  );
+}
+
 function messageKey(role: 'user' | 'assistant', text: string): string {
   return `${role}\0${text}`;
 }
@@ -229,6 +249,28 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
       ...(timestamp !== undefined ? { timestamp } : {}),
     });
 
+    if (record.value.type === 'compacted') {
+      const summary =
+        stringValue(payload.summary) ?? stringValue(payload.message);
+      if (summary !== undefined) {
+        const nativeEventId = stringValue(payload.window_id);
+        const nativeParentId = stringValue(payload.previous_window_id);
+        candidates.push({
+          kind: 'context_note',
+          label: 'Codex compaction summary',
+          text: summary,
+          ...positionFor(0),
+          ...(nativeEventId !== undefined
+            ? { native_event_id: nativeEventId }
+            : {}),
+          ...(nativeParentId !== undefined
+            ? { native_parent_id: nativeParentId }
+            : {}),
+        });
+      }
+      continue;
+    }
+
     if (record.value.type === 'response_item') {
       const payloadType = stringValue(payload.type);
       const nativeEventId = stringValue(payload.id);
@@ -280,8 +322,8 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
         const nativeOutputId = nativeEventId ?? callId;
         candidates.push({
           kind: 'tool_result',
-          output: outputText(payload.output),
-          is_error: false,
+          output: outputText(payload.output ?? payload.error),
+          is_error: toolResultIsError(payload),
           ...positionFor(0),
           ...(callId !== undefined ? { call_id: callId } : {}),
           ...(nativeOutputId !== undefined

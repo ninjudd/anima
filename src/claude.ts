@@ -261,8 +261,13 @@ function claudeCandidates(records: JsonlRecord[]): EventCandidate[] {
           tool_name: toolName,
           input: block.input ?? null,
           native_position: position,
-          ...(callId !== undefined ? { call_id: callId } : {}),
           ...origin,
+          ...(callId !== undefined
+            ? {
+                call_id: callId,
+                native_event_id: callId,
+              }
+            : {}),
         });
       } else if (type === 'user' && block.type === 'tool_result') {
         const callId = stringValue(block.tool_use_id);
@@ -271,8 +276,13 @@ function claudeCandidates(records: JsonlRecord[]): EventCandidate[] {
           output: contentText(block.content),
           is_error: block.is_error === true,
           native_position: position,
-          ...(callId !== undefined ? { call_id: callId } : {}),
           ...origin,
+          ...(callId !== undefined
+            ? {
+                call_id: callId,
+                native_event_id: callId,
+              }
+            : {}),
         });
       }
     }

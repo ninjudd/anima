@@ -102,3 +102,41 @@ test('uses native positions to distinguish repeated ID-less events', () => {
 
   assert.notEqual(session.events[0]?.event_id, session.events[1]?.event_id);
 });
+
+test('keeps call-ID-backed tool identities stable across block shifts', () => {
+  const base = {
+    provider: 'claude' as const,
+    session_id: 'session-1',
+    cwd: '/work/anima',
+    native_path: '/native/session.jsonl',
+    warnings: [],
+  };
+  const first = buildCanonicalSession({
+    ...base,
+    candidates: [
+      {
+        kind: 'tool_call',
+        tool_name: 'Read',
+        call_id: 'call-1',
+        native_event_id: 'call-1',
+        input: { path: 'README.md' },
+        native_position: { record: 4, block: 1 },
+      },
+    ],
+  });
+  const shifted = buildCanonicalSession({
+    ...base,
+    candidates: [
+      {
+        kind: 'tool_call',
+        tool_name: 'Read',
+        call_id: 'call-1',
+        native_event_id: 'call-1',
+        input: { path: 'README.md' },
+        native_position: { record: 4, block: 5 },
+      },
+    ],
+  });
+
+  assert.equal(first.events[0]?.event_id, shifted.events[0]?.event_id);
+});

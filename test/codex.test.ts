@@ -44,6 +44,7 @@ test('discovers and normalizes canonical Codex response items', async () => {
         'message',
         'message',
         'message',
+        'context_note',
       ],
     );
 
@@ -129,17 +130,25 @@ test('discovers and normalizes canonical Codex response items', async () => {
     );
     assert(customOutput?.kind === 'tool_result');
     assert.equal(customOutput.output, 'first result\nsecond result');
+    assert.equal(customOutput.is_error, true);
     assert.equal(customOutput.origin.native_event_id, 'call-2');
     assert.equal(
       customOutput.output.includes('data:image'),
       false,
       'non-text output blocks should be excluded',
     );
-    assert.equal(
-      session.events.some((event) => event.kind === 'context_note'),
-      false,
-      'turn_context summary modes are not compaction text',
+    const contextNotes = session.events.filter(
+      (event) => event.kind === 'context_note',
     );
+    assert.equal(contextNotes.length, 1);
+    assert.equal(
+      contextNotes[0]?.kind === 'context_note'
+        ? contextNotes[0].content[0]?.text
+        : undefined,
+      'Earlier Codex work was summarized.',
+    );
+    assert.equal(contextNotes[0]?.origin.native_event_id, 'window-2');
+    assert.equal(contextNotes[0]?.origin.native_parent_id, 'window-1');
   } finally {
     await temporary.cleanup();
   }
