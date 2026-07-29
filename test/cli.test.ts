@@ -37,7 +37,7 @@ test('prints canonical history for a dry-run', async () => {
 
     assert.equal(session.provider, 'claude');
     assert.equal(session.session_id, CLAUDE_SESSION_ID);
-    assert.equal(session.events.length, 7);
+    assert.equal(session.events.length, 8);
   } finally {
     await temporary.cleanup();
   }

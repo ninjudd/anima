@@ -9,6 +9,8 @@
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"function_call_output","id":"tool-r1","call_id":"call-1","output":"README contents"}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"custom_tool_call","id":"custom-a1","name":"search","input":"{\"query\":\"reader\"}","call_id":"call-2"}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-2","status":"failed","output":[{"type":"input_text","text":"first result"},{"type":"input_image","image_url":"data:image/png;base64,excluded"},{"type":"input_text","text":"second result"}]}}
+{"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"custom_tool_call","id":"custom-a2","name":"shell","input":"{\"command\":\"false\"}","call_id":"call-3"}}
+{"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call-3","output":"{\"metadata\":{\"duration_seconds\":0.5,\"exit_code\":7},\"output\":\"command failed\"}"}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"web_search_call","id":"web-1","status":"completed","action":{"type":"search","query":"anima context transfer"}}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"local_shell_call","id":"shell-a1","call_id":"shell-1","action":{"type":"exec","command":"git status"}}}
 {"timestamp":"2026-07-29T11:00:04Z","type":"response_item","payload":{"type":"local_shell_call_output","id":"shell-r1","call_id":"shell-1","output":"working tree clean"}}

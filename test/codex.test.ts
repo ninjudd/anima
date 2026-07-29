@@ -38,6 +38,8 @@ test('discovers and normalizes canonical Codex response items', async () => {
         'tool_call',
         'tool_result',
         'tool_call',
+        'tool_result',
+        'tool_call',
         'tool_call',
         'tool_result',
         'message',
@@ -137,6 +139,13 @@ test('discovers and normalizes canonical Codex response items', async () => {
       false,
       'non-text output blocks should be excluded',
     );
+    const envelopeOutput = session.events.find(
+      (event) => event.kind === 'tool_result' && event.call_id === 'call-3',
+    );
+    assert(envelopeOutput?.kind === 'tool_result');
+    assert.equal(envelopeOutput.output, 'command failed');
+    assert.equal(envelopeOutput.is_error, true);
+    assert.equal(envelopeOutput.output.includes('duration_seconds'), false);
     const contextNotes = session.events.filter(
       (event) => event.kind === 'context_note',
     );
@@ -154,7 +163,7 @@ test('discovers and normalizes canonical Codex response items', async () => {
   }
 });
 
-test('rejects conflicting Codex metadata IDs', async () => {
+test('accepts distinct Codex rollout and enclosing session IDs', async () => {
   const temporary = await temporaryDirectory();
   try {
     const directory = path.join(temporary.path, '2026', '07', '29');
@@ -172,12 +181,86 @@ test('rejects conflicting Codex metadata IDs', async () => {
       })}\n`,
     );
 
+    const session = await readCodexSession(CODEX_SESSION_ID, {
+      sessions_root: temporary.path,
+    });
+
+    assert.equal(session.session_id, CODEX_SESSION_ID);
+  } finally {
+    await temporary.cleanup();
+  }
+});
+
+test('rejects a mismatched authoritative Codex rollout ID', async () => {
+  const temporary = await temporaryDirectory();
+  try {
+    const directory = path.join(temporary.path, '2026', '07', '29');
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      path.join(directory, `rollout-${CODEX_SESSION_ID}.jsonl`),
+      `${JSON.stringify({
+        timestamp: '2026-07-29T11:00:00Z',
+        type: 'session_meta',
+        payload: {
+          id: '33333333-3333-4333-8333-333333333333',
+          session_id: CODEX_SESSION_ID,
+          cwd: '/work/anima',
+        },
+      })}\n`,
+    );
+
     await assert.rejects(
       readCodexSession(CODEX_SESSION_ID, {
         sessions_root: temporary.path,
       }),
       SessionFormatError,
     );
+  } finally {
+    await temporary.cleanup();
+  }
+});
+
+test('uses the final Codex cwd without contradictory warnings', async () => {
+  const temporary = await temporaryDirectory();
+  try {
+    const directory = path.join(temporary.path, '2026', '07', '29');
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      path.join(directory, `rollout-${CODEX_SESSION_ID}.jsonl`),
+      `${[
+        {
+          timestamp: '2026-07-29T11:00:00Z',
+          type: 'session_meta',
+          payload: {
+            id: CODEX_SESSION_ID,
+            cwd: '/work/anima',
+          },
+        },
+        {
+          timestamp: '2026-07-29T11:00:01Z',
+          type: 'turn_context',
+          payload: { cwd: '/work/other' },
+        },
+        {
+          timestamp: '2026-07-29T11:00:02Z',
+          type: 'turn_context',
+          payload: { cwd: '/work/anima' },
+        },
+      ].map((record) => JSON.stringify(record)).join('\n')}\n`,
+    );
+
+    const session = await readCodexSession(CODEX_SESSION_ID, {
+      sessions_root: temporary.path,
+    });
+
+    assert.equal(session.cwd, '/work/anima');
+    assert.deepEqual(session.warnings, [
+      {
+        code: 'cwd_changed',
+        message:
+          'Codex session recorded working directory changes from /work/anima; final directory is /work/anima.',
+      },
+    ]);
   } finally {
     await temporary.cleanup();
   }

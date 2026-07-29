@@ -166,16 +166,15 @@ function resolveCwd(
 function contentText(value: unknown): string {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) {
-    const text = value
+    if (value.length === 0) return '[non-text tool result omitted]';
+    return value
       .map((item) => {
         const block = objectValue(item);
         return block?.type === 'text' && typeof block.text === 'string'
           ? block.text
-          : undefined;
+          : '[non-text tool result omitted]';
       })
-      .filter((item): item is string => item !== undefined);
-    if (text.length > 0) return text.join('\n');
-    return '[non-text tool result omitted]';
+      .join('\n');
   }
   const block = objectValue(value);
   if (block?.type === 'image' || block?.type === 'image_reference') {

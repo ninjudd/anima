@@ -91,18 +91,10 @@ function metadata(records: JsonlRecord[], nativePath: string) {
       `Codex rollout ${nativePath} has no session_meta record.`,
     );
   }
-  const primaryId = stringValue(payload.id);
-  const sessionId = stringValue(payload.session_id);
-  if (
-    primaryId !== undefined &&
-    sessionId !== undefined &&
-    primaryId !== sessionId
-  ) {
-    throw new SessionFormatError(
-      `Codex rollout ${nativePath} has conflicting metadata IDs ${primaryId} and ${sessionId}.`,
-    );
-  }
-  const id = primaryId ?? sessionId;
+  // Newer threaded rollouts may use id for the rollout/thread and session_id
+  // for its enclosing session. The filename and requested ID identify the
+  // rollout, so id remains authoritative when both are present.
+  const id = stringValue(payload.id) ?? stringValue(payload.session_id);
   const cwd = stringValue(payload.cwd);
   if (id === undefined || cwd === undefined) {
     throw new SessionFormatError(
@@ -144,6 +136,9 @@ function outputText(value: unknown): unknown {
 
 function toolResultIsError(payload: Record<string, unknown>): boolean {
   if (payload.is_error === true || payload.success === false) return true;
+  if (typeof payload.exit_code === 'number' && payload.exit_code !== 0) {
+    return true;
+  }
   if (
     payload.error !== undefined &&
     payload.error !== null &&
@@ -160,6 +155,36 @@ function toolResultIsError(payload: Record<string, unknown>): boolean {
     status === 'cancelled' ||
     status === 'canceled'
   );
+}
+
+function decodeToolResult(payload: Record<string, unknown>): {
+  output: unknown;
+  is_error: boolean;
+} {
+  let value = payload.output ?? payload.error;
+  let envelopeError = false;
+
+  if (typeof value === 'string') {
+    try {
+      const envelope = objectValue(JSON.parse(value));
+      const metadata = objectValue(envelope?.metadata);
+      if (
+        envelope !== undefined &&
+        metadata !== undefined &&
+        Object.hasOwn(envelope, 'output')
+      ) {
+        value = envelope.output;
+        envelopeError = toolResultIsError(metadata);
+      }
+    } catch {
+      // Plain text output is expected and needs no envelope decoding.
+    }
+  }
+
+  return {
+    output: outputText(value),
+    is_error: toolResultIsError(payload) || envelopeError,
+  };
 }
 
 function messageKey(role: 'user' | 'assistant', text: string): string {
@@ -320,10 +345,11 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
       ) {
         const callId = stringValue(payload.call_id);
         const nativeOutputId = nativeEventId ?? callId;
+        const result = decodeToolResult(payload);
         candidates.push({
           kind: 'tool_result',
-          output: outputText(payload.output ?? payload.error),
-          is_error: toolResultIsError(payload),
+          output: result.output,
+          is_error: result.is_error,
           ...positionFor(0),
           ...(callId !== undefined ? { call_id: callId } : {}),
           ...(nativeOutputId !== undefined
@@ -376,7 +402,10 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
       if (message === undefined) continue;
       const role = payloadType === 'user_message' ? 'user' : 'assistant';
       const key = messageKey(role, message);
+      // Current rollouts mirror assistant event messages within two records.
+      // Keep the pairing local because older formats may retain legacy-only events.
       if (
+        role === 'assistant' &&
         matchesNearbyResponse(
           responseMessages,
           key,
@@ -396,21 +425,28 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
   return candidates;
 }
 
-function cwdWarnings(records: JsonlRecord[], expected: string): SessionWarning[] {
+function cwdState(
+  records: JsonlRecord[],
+  expected: string,
+): { cwd: string; warnings: SessionWarning[] } {
   const values = records
     .filter((record) => record.value.type === 'turn_context')
     .map((record) => objectValue(record.value.payload))
     .map((payload) => stringValue(payload?.cwd))
     .filter((value): value is string => value !== undefined);
-  const changed = values.find((value) => value !== expected);
-  return changed === undefined
-    ? []
-    : [
-        {
-          code: 'cwd_changed',
-          message: `Codex session changed working directory from ${expected} to ${values.at(-1)}.`,
-        },
-      ];
+  const cwd = values.at(-1) ?? expected;
+  const changed = values.some((value) => value !== expected);
+  return {
+    cwd,
+    warnings: changed
+      ? [
+          {
+            code: 'cwd_changed',
+            message: `Codex session recorded working directory changes from ${expected}; final directory is ${cwd}.`,
+          },
+        ]
+      : [],
+  };
 }
 
 export async function readCodexSession(
@@ -426,23 +462,13 @@ export async function readCodexSession(
     );
   }
 
-  const warnings = [
-    ...parsed.warnings,
-    ...cwdWarnings(parsed.records, meta.cwd),
-  ];
-  const cwd = warnings.some((warning) => warning.code === 'cwd_changed')
-    ? parsed.records
-        .filter((record) => record.value.type === 'turn_context')
-        .map((record) => objectValue(record.value.payload))
-        .map((payload) => stringValue(payload?.cwd))
-        .filter((value): value is string => value !== undefined)
-        .at(-1) ?? meta.cwd
-    : meta.cwd;
+  const resolvedCwd = cwdState(parsed.records, meta.cwd);
+  const warnings = [...parsed.warnings, ...resolvedCwd.warnings];
 
   return buildCanonicalSession({
     provider: 'codex',
     session_id: sessionId,
-    cwd,
+    cwd: resolvedCwd.cwd,
     native_path: nativePath,
     candidates: codexCandidates(parsed.records),
     warnings,

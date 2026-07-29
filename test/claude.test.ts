@@ -34,6 +34,7 @@ test('discovers and normalizes the active Claude branch', async () => {
         'tool_call',
         'tool_result',
         'tool_result',
+        'tool_result',
         'message',
         'context_note',
       ],
@@ -60,6 +61,15 @@ test('discovers and normalizes the active Claude branch', async () => {
     assert(imageResult?.kind === 'tool_result');
     assert.equal(imageResult.output, '[non-text tool result omitted]');
     assert.equal(JSON.stringify(session).includes('excluded-binary-data'), false);
+    const mixedResult = session.events.find(
+      (event) => event.kind === 'tool_result' && event.call_id === 'call-mixed',
+    );
+    assert(mixedResult?.kind === 'tool_result');
+    assert.equal(
+      mixedResult.output,
+      'Screenshot attached.\n[non-text tool result omitted]',
+    );
+    assert.equal(JSON.stringify(session).includes('excluded-mixed-data'), false);
 
     const toolCall = session.events.find(
       (event) => event.kind === 'tool_call' && event.call_id === 'call-1',
