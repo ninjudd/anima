@@ -286,10 +286,13 @@ wire-level duplicates.
 Native session files are append-only in the expected case. A provider outage or
 process crash can leave the final line incomplete. Readers:
 
-1. Parse complete newline-terminated records.
-2. Ignore an incomplete final record.
-3. Record a warning in transfer metadata.
-4. Never repair or truncate the native source file.
+1. Parse every complete newline-terminated record.
+2. If a non-empty final fragment is not newline-terminated, attempt to parse it
+   as one complete JSON record.
+3. Accept that final record when it is valid JSON.
+4. Ignore it and record a warning in transfer metadata only when it is
+   incomplete or invalid.
+5. Never repair or truncate the native source file.
 
 ## 9. Canonical history
 
@@ -310,6 +313,10 @@ Canonical events are stored as JSON Lines. Each event has a common envelope:
     "provider": "claude",
     "session_id": "...",
     "native_event_id": "...",
+    "native_position": {
+      "record": 17,
+      "block": 0
+    },
     "timestamp": "..."
   }
 }
@@ -337,9 +344,16 @@ For a native event first seen by Anima, `event_id` is derived from:
 
 - Provider
 - Native session ID
-- Native message or call ID when present
+- Native message or call ID when present; otherwise a provider-defined stable
+  position containing at least the source record ordinal and within-record block
+  index
+- Native parent ID or branch position when available
 - Event kind and role
 - A normalized content digest
+
+The stable position is assigned before filtering or deduplicating native
+records. This ensures two ID-less events with identical roles and content, such
+as repeated `continue` messages, still receive distinct canonical IDs.
 
 Events created from an existing lineage retain their canonical IDs across
 projections. The lineage store, not target-native metadata, is the primary
@@ -520,10 +534,12 @@ The encoder should:
 4. Flatten tool activity into inert history records.
 5. Write the complete transcript to a temporary file in the destination
    directory.
-6. Flush the file and atomically rename it to `<new-session-id>.jsonl`.
-7. Re-read and validate the generated chain.
-8. Record the native cursor and projection metadata.
-9. Launch `claude --resume <new-session-id>` from the working directory.
+6. Flush and fsync the temporary file.
+7. Atomically rename it to `<new-session-id>.jsonl`.
+8. Fsync the destination directory so the new directory entry is durable.
+9. Re-read and validate the generated chain.
+10. Record the native cursor and projection metadata.
+11. Launch `claude --resume <new-session-id>` from the working directory.
 
 The encoder must never overwrite an existing path. If the generated UUID
 collides, it generates another.
@@ -590,7 +606,8 @@ The transaction rules are:
 
 - Canonical history is committed before target-native projection begins.
 - Target creation is recorded as soon as a native ID exists.
-- Projection metadata is committed before launching the target.
+- Projection metadata is committed before launching the target and only after
+  generated native files and their destination directory entries are durable.
 - A launch failure does not delete the generated target session.
 - Retrying a recorded incomplete transfer resumes the same target when safe
   instead of creating duplicates.
@@ -667,7 +684,9 @@ Fixtures should cover:
 
 - Multiple user and assistant turns
 - Tool calls and results
-- Interrupted final lines
+- Valid final records without trailing newlines
+- Incomplete or invalid final fragments
+- Repeated ID-less events with identical roles and content
 - Compaction
 - Claude branches and sidechains
 - Codex duplicate event and response records
@@ -720,7 +739,8 @@ Expected operating condition. Read local durable history and continue.
 
 ### Source process died during a write
 
-Ignore the incomplete final JSONL line and report the cutoff.
+Attempt to parse a non-newline-terminated final fragment. Preserve it when it is
+valid JSON; otherwise ignore it and report the cutoff.
 
 ### Source session not found
 
