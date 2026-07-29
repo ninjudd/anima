@@ -40,9 +40,37 @@ Fail:
 - After a real turn, the TUI displays the real turn but still does not display
   the injected user and assistant items as prior turns.
 - `paginated` mode behaves the same as `legacy` mode.
-- Before the first real user turn, `thread/turns/list` reports that the thread is
-  not materialized. `thread/items/list` is advertised in generated bindings but
-  returns “not supported yet.”
+- Before the first real user turn, `thread/turns/list` exposes no injected
+  turns. It was observed returning either an empty page or an error that the
+  thread was not materialized, depending on the AppServer configuration.
+  `thread/items/list` is advertised in generated bindings but returns “not
+  supported yet.”
+
+### Standalone Anima readback
+
+Fail:
+
+- Reading the generated rollout with `readCodexSession` preserves the injected
+  assistant message but excludes the injected user message.
+- The reader deliberately sources visible user turns from `event_msg` records
+  because unmatched user `response_item` records also contain provider
+  bootstrap context. AppServer injection creates no matching `event_msg`.
+
+Round trips through an Anima-created target must therefore use the canonical
+lineage and native import boundary described in architecture section 10.3.
+Re-reading the generated rollout as an arbitrary standalone session is not
+role-complete.
+
+### Partial injection contract
+
+AppServer provides no atomic multi-batch transaction or idempotency key.
+`injectCodexItems` reports the confirmed prefix and the offset and size of an
+indeterminate failed batch. A timeout makes the whole connection unusable
+because the late response cannot prove whether that batch became durable.
+
+An encoder must mark a partially injected target incomplete and must not retry
+or continue injection in the same native thread. A transfer retry creates a
+fresh target thread and projects the complete canonical history again.
 
 ### Capability decision
 
@@ -53,6 +81,7 @@ Fail:
 | Survives AppServer exit | Yes |
 | Model-visible after resume | Yes |
 | Imported turns visible in TUI | No |
+| Role-complete standalone Anima readback | No |
 
 Anima can use AppServer injection as a durable model-context transport for this
 version, but it must not claim full history rendering. The production

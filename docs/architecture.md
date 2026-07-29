@@ -524,8 +524,10 @@ The black-box compatibility result for Codex CLI 0.146.0 is recorded in
 [`codex-appserver-compatibility.md`](codex-appserver-compatibility.md). Raw
 injected items are durable and model-visible after resume, but are not rendered
 as prior turns in the interactive TUI in either legacy or paginated history
-mode. The production encoder therefore remains gated on an explicit product
-decision or a separately validated native projection.
+mode. Standalone readback also excludes injected user items because they have no
+visible `event_msg` counterpart. The production encoder therefore remains gated
+on an explicit product decision and must rely on canonical lineage for round
+trips unless a separately validated native projection solves both limitations.
 
 ## 12. Codex-to-Claude projection
 
@@ -618,6 +620,9 @@ The transaction rules are:
 - A launch failure does not delete the generated target session.
 - Retrying a recorded incomplete transfer resumes the same target when safe
   instead of creating duplicates.
+- A failed or timed-out Codex injection is not safe to retry in the same target
+  because AppServer has no atomic batch or idempotency contract. Mark that
+  target incomplete and create a fresh target on transfer retry.
 - The new target ID and a manual resume command are always printed before
   process replacement or launch.
 

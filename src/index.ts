@@ -10,6 +10,7 @@ export {
 } from './codex.js';
 export {
   CodexAppServerClient,
+  CodexInjectionError,
   connectCodexAppServer,
   injectCodexItems,
   setCodexThreadName,

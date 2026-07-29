@@ -6,11 +6,15 @@ import test from 'node:test';
 
 import {
   connectCodexAppServer,
+  CodexInjectionError,
   injectCodexItems,
   setCodexThreadName,
   startPersistentCodexThread,
 } from '../src/codex-app-server.js';
-import { CodexAppServerError } from '../src/errors.js';
+import {
+  CodexAppServerError,
+  CodexAppServerRequestTimeoutError,
+} from '../src/errors.js';
 import { temporaryDirectory } from './helpers.js';
 
 const FAKE_APP_SERVER = fileURLToPath(
@@ -61,6 +65,23 @@ test('creates and injects a persistent Codex thread over JSON-RPC', async () => 
     .trim()
     .split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.equal(
+    requests.every((request) => request.jsonrpc === '2.0'),
+    true,
+  );
+  const packageMetadata = JSON.parse(
+    await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
+  ) as { version: string };
+  assert.equal(
+    (
+      (
+        requests[0]?.params as {
+          clientInfo: { version: string };
+        }
+      ).clientInfo
+    ).version,
+    packageMetadata.version,
+  );
   assert.deepEqual(
     requests.map((request) => request.method),
     [
@@ -148,6 +169,158 @@ test('rejects pending requests when the client closes', async () => {
     await rejection;
   } finally {
     await client.close();
+    await temporary.cleanup();
+  }
+});
+
+test('rejects timeout values that Node would silently clamp', async () => {
+  await assert.rejects(
+    connectCodexAppServer({ request_timeout_ms: 2 ** 31 }),
+    (error: unknown) =>
+      error instanceof CodexAppServerError &&
+      error.message ===
+        'request_timeout_ms must be an integer between 1 and 2147483647.',
+  );
+});
+
+test('makes the connection unusable after a request timeout', async () => {
+  const temporary = await temporaryDirectory();
+  const client = await connectCodexAppServer({
+    command: process.execPath,
+    arguments: [FAKE_APP_SERVER, `${temporary.path}/requests.jsonl`],
+    cwd: temporary.path,
+    request_timeout_ms: 100,
+  });
+  try {
+    await assert.rejects(
+      client.request('test/hang'),
+      (error: unknown) =>
+        error instanceof CodexAppServerRequestTimeoutError &&
+        error.message.includes(
+          'timed out after 100ms; the connection is no longer safe to use',
+        ),
+    );
+    await assert.rejects(
+      client.request('test/error'),
+      CodexAppServerRequestTimeoutError,
+    );
+  } finally {
+    await client.close();
+    await temporary.cleanup();
+  }
+});
+
+test('reports the confirmed prefix when injection partially fails', async () => {
+  const temporary = await temporaryDirectory();
+  const threadId = '22222222-2222-4222-8222-222222222222';
+  const client = await connectCodexAppServer({
+    command: process.execPath,
+    arguments: [
+      FAKE_APP_SERVER,
+      `${temporary.path}/requests.jsonl`,
+      'fail-second-injection',
+    ],
+    cwd: temporary.path,
+  });
+  try {
+    const items = Array.from({ length: 5 }, (_, index) => ({
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: `message ${String(index)}` }],
+    }));
+    await assert.rejects(
+      injectCodexItems(client, threadId, items, 2),
+      (error: unknown) => {
+        assert(error instanceof CodexInjectionError);
+        assert.equal(error.thread_id, threadId);
+        assert.equal(error.confirmed_item_count, 2);
+        assert.equal(error.attempted_batch_offset, 2);
+        assert.equal(error.attempted_batch_count, 2);
+        assert.equal(error.total_item_count, 5);
+        assert.equal(error.attempted_batch_state, 'indeterminate');
+        assert.match(error.message, /abandon thread .* instead of retrying it/);
+        return true;
+      },
+    );
+  } finally {
+    await client.close();
+    await temporary.cleanup();
+  }
+});
+
+test('rejects server-initiated requests with JSON-RPC method-not-found', async () => {
+  const temporary = await temporaryDirectory();
+  const logPath = `${temporary.path}/requests.jsonl`;
+  const client = await connectCodexAppServer({
+    command: process.execPath,
+    arguments: [FAKE_APP_SERVER, logPath, 'server-request'],
+    cwd: temporary.path,
+  });
+  try {
+    await assert.rejects(client.request('test/error'), CodexAppServerError);
+  } finally {
+    await client.close();
+  }
+
+  const requests = (await readFile(logPath, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const response = requests.find(
+    (request) => request.id === 'server-request-1',
+  );
+  assert.deepEqual(response, {
+    jsonrpc: '2.0',
+    id: 'server-request-1',
+    error: {
+      code: -32601,
+      message:
+        'Anima does not support server request item/tool/requestUserInput.',
+    },
+  });
+  await temporary.cleanup();
+});
+
+test('does not wait for a detached grandchild holding stdout open', async () => {
+  const temporary = await temporaryDirectory();
+  const client = await connectCodexAppServer({
+    command: process.execPath,
+    arguments: [
+      FAKE_APP_SERVER,
+      `${temporary.path}/requests.jsonl`,
+      'leak-stdout',
+    ],
+    cwd: temporary.path,
+    close_timeout_ms: 100,
+  });
+  const startedAt = Date.now();
+  try {
+    await client.close();
+    assert.equal(Date.now() - startedAt < 1_000, true);
+  } finally {
+    await client.close();
+    await temporary.cleanup();
+  }
+});
+
+test('bounds SIGTERM and SIGKILL shutdown escalation', async () => {
+  const temporary = await temporaryDirectory();
+  const client = await connectCodexAppServer({
+    command: process.execPath,
+    arguments: [
+      FAKE_APP_SERVER,
+      `${temporary.path}/requests.jsonl`,
+      'ignore-sigterm',
+    ],
+    cwd: temporary.path,
+    close_timeout_ms: 50,
+  });
+  const startedAt = Date.now();
+  try {
+    await assert.rejects(client.close(), CodexAppServerError);
+    assert.equal(Date.now() - startedAt < 1_000, true);
+  } finally {
+    await client.close().catch(() => undefined);
     await temporary.cleanup();
   }
 });

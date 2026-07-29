@@ -2,16 +2,22 @@ import {
   spawn,
   type ChildProcessWithoutNullStreams,
 } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { CodexAppServerError } from './errors.js';
+import {
+  CodexAppServerError,
+  CodexAppServerRequestTimeoutError,
+} from './errors.js';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_CLOSE_TIMEOUT_MS = 3_000;
 const MAX_STDERR_CHARACTERS = 65_536;
 const MAX_RESPONSE_BUFFER_CHARACTERS = 4 * 1024 * 1024;
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 const DEFAULT_INJECTION_BATCH_SIZE = 128;
+const STDERR_TRUNCATION_MARKER = '\n...[stderr truncated]...\n';
 
 type JsonObject = Record<string, unknown>;
 export type CodexRawItem = Record<string, unknown>;
@@ -57,6 +63,45 @@ export interface CodexThreadReference {
   history_mode: 'legacy' | 'paginated';
 }
 
+export class CodexInjectionError extends CodexAppServerError {
+  readonly thread_id: string;
+  readonly confirmed_item_count: number;
+  readonly attempted_batch_offset: number;
+  readonly attempted_batch_count: number;
+  readonly total_item_count: number;
+  readonly attempted_batch_state = 'indeterminate' as const;
+  readonly original_error: unknown;
+
+  constructor(
+    threadId: string,
+    confirmedItemCount: number,
+    attemptedBatchCount: number,
+    totalItemCount: number,
+    originalError: unknown,
+  ) {
+    const finalItem = confirmedItemCount + attemptedBatchCount;
+    const detail =
+      originalError instanceof Error
+        ? ` ${originalError.message}`
+        : ` ${String(originalError)}`;
+    super(
+      `Codex history injection failed for items ${String(
+        confirmedItemCount + 1,
+      )}-${String(finalItem)} of ${String(
+        totalItemCount,
+      )}; ${String(
+        confirmedItemCount,
+      )} earlier items were confirmed.${detail} The attempted batch may have been applied; abandon thread ${threadId} instead of retrying it.`,
+    );
+    this.thread_id = threadId;
+    this.confirmed_item_count = confirmedItemCount;
+    this.attempted_batch_offset = confirmedItemCount;
+    this.attempted_batch_count = attemptedBatchCount;
+    this.total_item_count = totalItemCount;
+    this.original_error = originalError;
+  }
+}
+
 function objectValue(value: unknown): JsonObject | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
@@ -83,10 +128,52 @@ function positiveTimeout(
   label: string,
 ): number {
   const selected = value ?? fallback;
-  if (!Number.isFinite(selected) || selected <= 0) {
-    throw new CodexAppServerError(`${label} must be a positive number.`);
+  if (
+    !Number.isSafeInteger(selected) ||
+    selected <= 0 ||
+    selected > MAX_TIMER_DELAY_MS
+  ) {
+    throw new CodexAppServerError(
+      `${label} must be an integer between 1 and ${String(
+        MAX_TIMER_DELAY_MS,
+      )}.`,
+    );
   }
   return selected;
+}
+
+function packageVersion(): string {
+  try {
+    const metadata = objectValue(
+      JSON.parse(
+        readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+      ),
+    );
+    if (metadata !== undefined && typeof metadata.version === 'string') {
+      return metadata.version;
+    }
+  } catch (error) {
+    throw new CodexAppServerError(
+      `Could not read Anima package version: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  throw new CodexAppServerError(
+    'Could not read Anima package version: package.json has no version.',
+  );
+}
+
+function appendBoundedStderr(current: string, chunk: string): string {
+  const combined = `${current}${chunk}`;
+  if (combined.length <= MAX_STDERR_CHARACTERS) return combined;
+  const remaining =
+    MAX_STDERR_CHARACTERS - STDERR_TRUNCATION_MARKER.length;
+  const headLength = Math.floor(remaining / 2);
+  const tailLength = remaining - headLength;
+  return `${combined.slice(0, headLength)}${STDERR_TRUNCATION_MARKER}${combined.slice(
+    -tailLength,
+  )}`;
 }
 
 function exitDescription(result: ExitResult, stderr: string): string {
@@ -98,14 +185,21 @@ function exitDescription(result: ExitResult, stderr: string): string {
   return detail.length > 0 ? `${status}: ${detail}` : status;
 }
 
+/**
+ * Bootstrap-only AppServer transport.
+ *
+ * Anima does not run model turns through this connection. Server-initiated
+ * requests are rejected fail-closed because approvals and tools require a
+ * full interactive client implementation.
+ */
 export class CodexAppServerClient {
-  readonly server_info: CodexAppServerInfo;
-
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly requestTimeoutMs: number;
   private readonly closeTimeoutMs: number;
   private readonly pending = new Map<number, PendingRequest>();
-  private exitPromise: Promise<ExitResult>;
+  private readonly terminationPromise: Promise<ExitResult>;
+  private serverInfo: Readonly<CodexAppServerInfo> | undefined;
+  private shutdownError: CodexAppServerError | undefined;
   private nextRequestId = 1;
   private stdoutBuffer = '';
   private stderrBuffer = '';
@@ -117,13 +211,59 @@ export class CodexAppServerClient {
     child: ChildProcessWithoutNullStreams,
     requestTimeoutMs: number,
     closeTimeoutMs: number,
-    serverInfo: CodexAppServerInfo,
   ) {
     this.child = child;
     this.requestTimeoutMs = requestTimeoutMs;
     this.closeTimeoutMs = closeTimeoutMs;
-    this.server_info = serverInfo;
-    this.exitPromise = Promise.resolve({ code: null, signal: null });
+    this.terminationPromise = new Promise<ExitResult>((resolve) => {
+      let settled = false;
+      const recordTermination = (
+        code: number | null,
+        signal: NodeJS.Signals | null,
+      ) => {
+        if (settled) return;
+        settled = true;
+        const result = { code, signal };
+        this.closed = true;
+        this.disposeStreams();
+        if (!this.closing || code !== 0) {
+          const error = new CodexAppServerError(
+            `Codex AppServer exited with ${exitDescription(
+              result,
+              this.stderrBuffer,
+            )}.`,
+          );
+          this.shutdownError = error;
+          this.fail(error);
+        }
+        resolve(result);
+      };
+      child.once('exit', recordTermination);
+      child.once('close', recordTermination);
+    });
+
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => this.consumeStdout(chunk));
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      this.stderrBuffer = appendBoundedStderr(this.stderrBuffer, chunk);
+    });
+    child.once('error', (error) => {
+      this.fail(
+        new CodexAppServerError(
+          `Failed to start Codex AppServer: ${error.message}`,
+        ),
+      );
+    });
+  }
+
+  get server_info(): Readonly<CodexAppServerInfo> {
+    if (this.serverInfo === undefined) {
+      throw new CodexAppServerError(
+        'Codex AppServer connection is not initialized.',
+      );
+    }
+    return this.serverInfo;
   }
 
   static async connect(
@@ -147,7 +287,7 @@ export class CodexAppServerClient {
       stdio: 'pipe',
     });
 
-    const client = CodexAppServerClient.attach(
+    const client = new CodexAppServerClient(
       child,
       requestTimeoutMs,
       closeTimeoutMs,
@@ -158,7 +298,7 @@ export class CodexAppServerClient {
           clientInfo: {
             name: 'anima',
             title: 'Anima',
-            version: '0.1.0',
+            version: packageVersion(),
           },
           capabilities: {
             experimentalApi: true,
@@ -201,62 +341,8 @@ export class CodexAppServerClient {
     }
   }
 
-  private static attach(
-    child: ChildProcessWithoutNullStreams,
-    requestTimeoutMs: number,
-    closeTimeoutMs: number,
-  ): CodexAppServerClient {
-    const placeholder: CodexAppServerInfo = {
-      user_agent: '',
-      codex_home: '',
-      platform_family: '',
-      platform_os: '',
-    };
-    const client = new CodexAppServerClient(
-      child,
-      requestTimeoutMs,
-      closeTimeoutMs,
-      placeholder,
-    );
-    const exitPromise = new Promise<ExitResult>((resolve) => {
-      child.once('close', (code, signal) => {
-        const result = { code, signal };
-        client.closed = true;
-        if (!client.closing || code !== 0) {
-          client.fail(
-            new CodexAppServerError(
-              `Codex AppServer exited with ${exitDescription(
-                result,
-                client.stderrBuffer,
-              )}.`,
-            ),
-          );
-        }
-        resolve(result);
-      });
-    });
-    client.exitPromise = exitPromise;
-
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => client.consumeStdout(chunk));
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => {
-      client.stderrBuffer = `${client.stderrBuffer}${chunk}`.slice(
-        -MAX_STDERR_CHARACTERS,
-      );
-    });
-    child.once('error', (error) => {
-      client.fail(
-        new CodexAppServerError(
-          `Failed to start Codex AppServer: ${error.message}`,
-        ),
-      );
-    });
-    return client;
-  }
-
   private setServerInfo(info: CodexAppServerInfo): void {
-    Object.assign(this.server_info, info);
+    this.serverInfo = Object.freeze({ ...info });
   }
 
   async request(method: string, params?: unknown): Promise<unknown> {
@@ -266,12 +352,11 @@ export class CodexAppServerClient {
 
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(
-          new CodexAppServerError(
+        this.fail(
+          new CodexAppServerRequestTimeoutError(
             `Codex AppServer request ${method} timed out after ${String(
               this.requestTimeoutMs,
-            )}ms.`,
+            )}ms; the connection is no longer safe to use.`,
           ),
         );
       }, this.requestTimeoutMs);
@@ -302,7 +387,10 @@ export class CodexAppServerClient {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closed) {
+      if (this.shutdownError !== undefined) throw this.shutdownError;
+      return;
+    }
     if (!this.closing) {
       this.closing = true;
       this.fail(
@@ -311,28 +399,37 @@ export class CodexAppServerClient {
       this.child.stdin.end();
     }
 
-    const timedOut = Symbol('timed-out');
-    let result = await Promise.race([
-      this.exitPromise,
-      delay(this.closeTimeoutMs, timedOut, { ref: false }),
-    ]);
-    if (result === timedOut) {
+    let result = await this.waitForTermination();
+    if (result === undefined) {
       this.child.kill('SIGTERM');
-      result = await Promise.race([
-        this.exitPromise,
-        delay(this.closeTimeoutMs, timedOut, { ref: false }),
-      ]);
+      result = await this.waitForTermination();
     }
-    if (result === timedOut) {
+    if (result === undefined) {
       this.child.kill('SIGKILL');
-      result = await this.exitPromise;
+      result = await this.waitForTermination();
+    }
+    if (result === undefined) {
+      const error = new CodexAppServerError(
+        `Codex AppServer did not exit within ${String(
+          this.closeTimeoutMs,
+        )}ms after SIGKILL.`,
+      );
+      this.shutdownError = error;
+      this.fail(error);
+      this.disposeStreams();
+      this.child.unref();
+      this.closed = true;
+      throw error;
     }
     if (result.code !== 0) {
-      throw new CodexAppServerError(
-        `Codex AppServer exited with ${exitDescription(
-          result,
-          this.stderrBuffer,
-        )}.`,
+      throw (
+        this.shutdownError ??
+        new CodexAppServerError(
+          `Codex AppServer exited with ${exitDescription(
+            result,
+            this.stderrBuffer,
+          )}.`,
+        )
       );
     }
   }
@@ -345,7 +442,7 @@ export class CodexAppServerClient {
   }
 
   private async write(message: JsonObject): Promise<void> {
-    const line = `${JSON.stringify(message)}\n`;
+    const line = `${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`;
     await new Promise<void>((resolve, reject) => {
       this.child.stdin.write(line, (error) => {
         if (error !== null && error !== undefined) {
@@ -469,6 +566,21 @@ export class CodexAppServerClient {
     }
     this.pending.clear();
   }
+
+  private async waitForTermination(): Promise<ExitResult | undefined> {
+    const timedOut = Symbol('timed-out');
+    const result = await Promise.race([
+      this.terminationPromise,
+      delay(this.closeTimeoutMs, timedOut, { ref: false }),
+    ]);
+    return result === timedOut ? undefined : result;
+  }
+
+  private disposeStreams(): void {
+    this.child.stdin.destroy();
+    this.child.stdout.destroy();
+    this.child.stderr.destroy();
+  }
 }
 
 export async function connectCodexAppServer(
@@ -557,10 +669,24 @@ export async function injectCodexItems(
     );
   }
   for (let offset = 0; offset < items.length; offset += batchSize) {
-    await client.request('thread/inject_items', {
-      threadId,
-      items: items.slice(offset, offset + batchSize),
-    });
+    const batch = items.slice(offset, offset + batchSize);
+    try {
+      await client.request('thread/inject_items', {
+        threadId,
+        items: batch,
+      });
+    } catch (error) {
+      // AppServer offers neither an idempotency key nor an atomic multi-batch
+      // transaction. A timed-out batch may already be durable. The caller must
+      // mark this target incomplete and start a fresh thread on retry.
+      throw new CodexInjectionError(
+        threadId,
+        offset,
+        batch.length,
+        items.length,
+        error,
+      );
+    }
   }
 }
 
