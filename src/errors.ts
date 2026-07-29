@@ -12,3 +12,5 @@ export class SessionNotFoundError extends AnimaError {}
 export class AmbiguousSessionError extends AnimaError {}
 
 export class SessionFormatError extends AnimaError {}
+
+export class CodexAppServerError extends AnimaError {}

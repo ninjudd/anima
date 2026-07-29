@@ -520,6 +520,13 @@ than an automatic fallback.
 Anima speaks the small AppServer JSON-RPC protocol directly. It does not depend
 on the broader agent SDK.
 
+The black-box compatibility result for Codex CLI 0.146.0 is recorded in
+[`codex-appserver-compatibility.md`](codex-appserver-compatibility.md). Raw
+injected items are durable and model-visible after resume, but are not rendered
+as prior turns in the interactive TUI in either legacy or paginated history
+mode. The production encoder therefore remains gated on an explicit product
+decision or a separately validated native projection.
+
 ## 12. Codex-to-Claude projection
 
 Claude Code does not currently expose a supported arbitrary-history injection
