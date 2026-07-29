@@ -1,0 +1,26 @@
+{
+  "name": "anima",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Transfer local coding-agent history between Claude Code and Codex.",
+  "type": "module",
+  "bin": {
+    "anima": "./dist/src/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.7.0"
+  }
+}

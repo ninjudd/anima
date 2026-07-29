@@ -1,0 +1,14 @@
+export class AnimaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = new.target.name;
+  }
+}
+
+export class UsageError extends AnimaError {}
+
+export class SessionNotFoundError extends AnimaError {}
+
+export class AmbiguousSessionError extends AnimaError {}
+
+export class SessionFormatError extends AnimaError {}
