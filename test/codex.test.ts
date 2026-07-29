@@ -48,7 +48,6 @@ test('discovers and normalizes canonical Codex response items', async () => {
         'message',
         'message',
         'message',
-        'context_note',
       ],
     );
 
@@ -187,15 +186,11 @@ test('discovers and normalizes canonical Codex response items', async () => {
     const contextNotes = session.events.filter(
       (event) => event.kind === 'context_note',
     );
-    assert.equal(contextNotes.length, 1);
     assert.equal(
-      contextNotes[0]?.kind === 'context_note'
-        ? contextNotes[0].content[0]?.text
-        : undefined,
-      'Earlier Codex work was summarized.',
+      contextNotes.length,
+      0,
+      'encrypted Codex compaction records should not become context notes',
     );
-    assert.equal(contextNotes[0]?.origin.native_event_id, 'window-2');
-    assert.equal(contextNotes[0]?.origin.native_parent_id, 'window-1');
   } finally {
     await temporary.cleanup();
   }
