@@ -183,6 +183,13 @@ function contentText(value: unknown): string {
   return stableStringify(value);
 }
 
+function imagePlaceholder(block: Record<string, unknown>): string | undefined {
+  if (block.type !== 'image' && block.type !== 'image_reference') {
+    return undefined;
+  }
+  return '[image omitted]';
+}
+
 function claudeCandidates(records: JsonlRecord[]): EventCandidate[] {
   const candidates: EventCandidate[] = [];
 
@@ -241,6 +248,7 @@ function claudeCandidates(records: JsonlRecord[]): EventCandidate[] {
         record: record.position.record,
         block: blockIndex,
       };
+      const imageText = imagePlaceholder(block);
 
       if (block.type === 'text' && typeof block.text === 'string') {
         if (block.text === '') continue;
@@ -248,6 +256,14 @@ function claudeCandidates(records: JsonlRecord[]): EventCandidate[] {
           kind: 'message',
           role: type,
           text: block.text,
+          native_position: position,
+          ...origin,
+        });
+      } else if (imageText !== undefined) {
+        candidates.push({
+          kind: 'message',
+          role: type,
+          text: imageText,
           native_position: position,
           ...origin,
         });

@@ -31,6 +31,7 @@ test('discovers and normalizes the active Claude branch', async () => {
       [
         'message',
         'message',
+        'message',
         'tool_call',
         'tool_result',
         'tool_result',
@@ -45,6 +46,20 @@ test('discovers and normalizes the active Claude branch', async () => {
           event.kind === 'message' &&
           event.content.some((block) => block.text.includes('inactive')),
       ),
+      false,
+    );
+    assert.equal(
+      session.events.some(
+        (event) =>
+          event.kind === 'message' &&
+          event.role === 'user' &&
+          event.content[0]?.text === '[image omitted]',
+      ),
+      true,
+      'visible image input should retain a safe placeholder',
+    );
+    assert.equal(
+      JSON.stringify(session).includes('excluded-user-image-data'),
       false,
     );
     assert.equal(

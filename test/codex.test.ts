@@ -33,6 +33,8 @@ test('discovers and normalizes canonical Codex response items', async () => {
         'message',
         'message',
         'message',
+        'message',
+        'message',
         'tool_call',
         'tool_result',
         'tool_call',
@@ -99,6 +101,25 @@ test('discovers and normalizes canonical Codex response items', async () => {
     assert.equal(
       session.events.some(
         (event) =>
+          event.kind === 'message' &&
+          event.content[0]?.text === 'First half second half',
+      ),
+      false,
+      'combined agent_message mirrors should be deduplicated',
+    );
+    assert.equal(
+      session.events.filter(
+        (event) =>
+          event.kind === 'message' &&
+          (event.content[0]?.text === 'First half' ||
+            event.content[0]?.text === ' second half'),
+      ).length,
+      2,
+      'block-level assistant content should remain canonical',
+    );
+    assert.equal(
+      session.events.some(
+        (event) =>
           event.kind === 'tool_result' && event.call_id === 'shell-1',
       ),
       true,
@@ -127,6 +148,23 @@ test('discovers and normalizes canonical Codex response items', async () => {
       },
       status: 'completed',
     });
+    const callWithoutItemId = session.events.find(
+      (event) => event.kind === 'tool_call' && event.call_id === 'call-3',
+    );
+    assert.equal(callWithoutItemId?.origin.native_event_id, 'call-3');
+    const shellWithoutItemId = session.events.find(
+      (event) => event.kind === 'tool_call' && event.call_id === 'shell-1',
+    );
+    assert.equal(shellWithoutItemId?.origin.native_event_id, 'shell-1');
+    const lookalikeOutput = session.events.find(
+      (event) => event.kind === 'tool_result' && event.call_id === 'call-1',
+    );
+    assert(lookalikeOutput?.kind === 'tool_result');
+    assert.equal(
+      lookalikeOutput.output,
+      '{"metadata":{"source":"tool"},"output":"README contents"}',
+    );
+    assert.equal(lookalikeOutput.is_error, false);
     const customOutput = session.events.find(
       (event) => event.kind === 'tool_result' && event.call_id === 'call-2',
     );

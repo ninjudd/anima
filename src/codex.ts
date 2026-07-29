@@ -169,9 +169,12 @@ function decodeToolResult(payload: Record<string, unknown>): {
       const envelope = objectValue(JSON.parse(value));
       const metadata = objectValue(envelope?.metadata);
       if (
+        payload.type === 'custom_tool_call_output' &&
         envelope !== undefined &&
         metadata !== undefined &&
-        Object.hasOwn(envelope, 'output')
+        Object.hasOwn(envelope, 'output') &&
+        typeof metadata.duration_seconds === 'number' &&
+        typeof metadata.exit_code === 'number'
       ) {
         value = envelope.output;
         envelopeError = toolResultIsError(metadata);
@@ -221,19 +224,21 @@ function responseMessageOccurrences(
     const role = stringValue(payload.role);
     if (role !== 'assistant') continue;
     const content = Array.isArray(payload.content) ? payload.content : [];
+    const text: string[] = [];
     for (const item of content) {
       const block = objectValue(item);
       if (block === undefined) continue;
-      const text = assistantMessageText(block);
-      if (text === undefined) continue;
-      const timestamp = stringValue(record.value.timestamp);
-      occurrences.push({
-        key: messageKey(role, text),
-        record: record.position.record,
-        matched: false,
-        ...(timestamp !== undefined ? { timestamp } : {}),
-      });
+      const decoded = assistantMessageText(block);
+      if (decoded !== undefined) text.push(decoded);
     }
+    if (text.length === 0) continue;
+    const timestamp = stringValue(record.value.timestamp);
+    occurrences.push({
+      key: messageKey(role, text.join('')),
+      record: record.position.record,
+      matched: false,
+      ...(timestamp !== undefined ? { timestamp } : {}),
+    });
   }
   return occurrences;
 }
@@ -328,14 +333,15 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
         const toolName = stringValue(payload.name);
         if (toolName === undefined) continue;
         const callId = stringValue(payload.call_id);
+        const nativeCallId = nativeEventId ?? callId;
         candidates.push({
           kind: 'tool_call',
           tool_name: toolName,
           input: parseArguments(payload.arguments ?? payload.input),
           ...positionFor(0),
           ...(callId !== undefined ? { call_id: callId } : {}),
-          ...(nativeEventId !== undefined
-            ? { native_event_id: nativeEventId }
+          ...(nativeCallId !== undefined
+            ? { native_event_id: nativeCallId }
             : {}),
         });
       } else if (
@@ -376,14 +382,15 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
         });
       } else if (payloadType === 'local_shell_call') {
         const callId = stringValue(payload.call_id);
+        const nativeCallId = nativeEventId ?? callId;
         candidates.push({
           kind: 'tool_call',
           tool_name: 'shell',
           input: payload.action ?? null,
           ...positionFor(0),
           ...(callId !== undefined ? { call_id: callId } : {}),
-          ...(nativeEventId !== undefined
-            ? { native_event_id: nativeEventId }
+          ...(nativeCallId !== undefined
+            ? { native_event_id: nativeCallId }
             : {}),
         });
       }
