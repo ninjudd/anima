@@ -28,12 +28,15 @@ test('discovers and normalizes canonical Codex response items', async () => {
       [
         'message',
         'message',
+        'message',
+        'tool_call',
+        'tool_result',
         'tool_call',
         'tool_result',
         'message',
         'message',
         'message',
-        'context_note',
+        'message',
       ],
     );
 
@@ -66,6 +69,28 @@ test('discovers and normalizes canonical Codex response items', async () => {
       ),
       true,
       'legacy-only event messages should be retained',
+    );
+    assert.equal(
+      session.events.filter(
+        (event) =>
+          event.kind === 'message' &&
+          event.content[0]?.text === 'Repeated status.',
+      ).length,
+      2,
+      'a distant legacy message must not be suppressed by an earlier response item',
+    );
+    assert.equal(
+      session.events.some(
+        (event) =>
+          event.kind === 'tool_result' && event.call_id === 'shell-1',
+      ),
+      true,
+      'local shell outputs should be preserved',
+    );
+    assert.equal(
+      session.events.some((event) => event.kind === 'context_note'),
+      false,
+      'turn_context summary modes are not compaction text',
     );
   } finally {
     await temporary.cleanup();

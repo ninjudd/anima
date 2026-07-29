@@ -270,6 +270,11 @@ export async function readClaudeSession(
   const parsed = await readJsonl(nativePath);
 
   const observedIds = new Set(parsed.records.flatMap((record) => sessionIds(record)));
+  if (observedIds.size === 0) {
+    throw new SessionFormatError(
+      `Claude transcript ${nativePath} has no embedded session ID.`,
+    );
+  }
   for (const observed of observedIds) {
     if (observed !== sessionId) {
       throw new SessionFormatError(

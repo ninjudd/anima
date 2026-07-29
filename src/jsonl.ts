@@ -3,13 +3,15 @@ import { createReadStream } from 'node:fs';
 import { SessionFormatError } from './errors.js';
 import type { JsonObject, JsonlReadResult } from './types.js';
 
+class JsonSyntaxError extends SessionFormatError {}
+
 function parseObject(line: string, path: string, record: number): JsonObject {
   let value: unknown;
   try {
     value = JSON.parse(line);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new SessionFormatError(
+    throw new JsonSyntaxError(
       `Invalid JSONL record ${record} in ${path}: ${detail}`,
     );
   }
@@ -68,6 +70,7 @@ export async function readJsonl(path: string): Promise<JsonlReadResult> {
           position: { record: recordNumber, byte_offset: byteOffset },
         });
       } catch (error) {
+        if (!(error instanceof JsonSyntaxError)) throw error;
         warnings.push({
           code: 'invalid_final_fragment',
           message: `Ignored invalid final JSON fragment in ${path}.`,

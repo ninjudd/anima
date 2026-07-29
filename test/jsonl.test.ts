@@ -57,3 +57,15 @@ test('rejects invalid JSON before the final fragment', async () => {
     await temporary.cleanup();
   }
 });
+
+test('rejects a structurally invalid final JSON value', async () => {
+  const temporary = await temporaryDirectory();
+  try {
+    const transcript = path.join(temporary.path, 'invalid-shape.jsonl');
+    await writeFile(transcript, '{"type":"first"}\n[]');
+
+    await assert.rejects(readJsonl(transcript), SessionFormatError);
+  } finally {
+    await temporary.cleanup();
+  }
+});

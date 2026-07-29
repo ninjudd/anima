@@ -75,18 +75,55 @@ function eventIdentity(
 ): string {
   const nativeKey =
     candidate.native_event_id === undefined
-      ? candidate.native_position
+      ? {
+          position: candidate.native_position,
+          parent_id: candidate.native_parent_id ?? null,
+        }
       : {
           id: candidate.native_event_id,
           block: candidate.native_position.block,
         };
+
+  let payload: unknown;
+  switch (candidate.kind) {
+    case 'message':
+      payload = {
+        kind: candidate.kind,
+        role: candidate.role,
+        text: candidate.text,
+      };
+      break;
+    case 'tool_call':
+      payload = {
+        kind: candidate.kind,
+        tool_name: candidate.tool_name,
+        call_id: candidate.call_id ?? null,
+        input: candidate.input,
+      };
+      break;
+    case 'tool_result':
+      payload = {
+        kind: candidate.kind,
+        call_id: candidate.call_id ?? null,
+        output: candidate.output,
+        is_error: candidate.is_error,
+      };
+      break;
+    case 'context_note':
+      payload = {
+        kind: candidate.kind,
+        label: candidate.label,
+        text: candidate.text,
+      };
+      break;
+  }
+
   return `evt_${sha256(
     stableStringify({
       provider,
       session_id: sessionId,
       native_key: nativeKey,
-      kind: candidate.kind,
-      payload: candidate,
+      payload,
     }),
   )}`;
 }

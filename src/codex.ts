@@ -118,8 +118,17 @@ function messageKey(role: 'user' | 'assistant', text: string): string {
   return `${role}\0${text}`;
 }
 
-function responseMessageCounts(records: JsonlRecord[]): Map<string, number> {
-  const counts = new Map<string, number>();
+interface ResponseMessageOccurrence {
+  key: string;
+  record: number;
+  timestamp?: string;
+  matched: boolean;
+}
+
+function responseMessageOccurrences(
+  records: JsonlRecord[],
+): ResponseMessageOccurrence[] {
+  const occurrences: ResponseMessageOccurrence[] = [];
   for (const record of records) {
     if (record.value.type !== 'response_item') continue;
     const payload = objectValue(record.value.payload);
@@ -131,16 +140,44 @@ function responseMessageCounts(records: JsonlRecord[]): Map<string, number> {
     for (const item of content) {
       const block = objectValue(item);
       if (block?.type !== expectedType || typeof block.text !== 'string') continue;
-      const key = messageKey(role, block.text);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const timestamp = stringValue(record.value.timestamp);
+      occurrences.push({
+        key: messageKey(role, block.text),
+        record: record.position.record,
+        matched: false,
+        ...(timestamp !== undefined ? { timestamp } : {}),
+      });
     }
   }
-  return counts;
+  return occurrences;
+}
+
+function matchesNearbyResponse(
+  occurrences: ResponseMessageOccurrence[],
+  key: string,
+  record: number,
+  timestamp: string | undefined,
+): boolean {
+  const candidates = occurrences
+    .filter((occurrence) => {
+      if (occurrence.matched || occurrence.key !== key) return false;
+      const sameTimestamp =
+        timestamp !== undefined && occurrence.timestamp === timestamp;
+      return sameTimestamp || Math.abs(occurrence.record - record) <= 2;
+    })
+    .sort(
+      (left, right) =>
+        Math.abs(left.record - record) - Math.abs(right.record - record),
+    );
+  const match = candidates[0];
+  if (match === undefined) return false;
+  match.matched = true;
+  return true;
 }
 
 function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
   const candidates: EventCandidate[] = [];
-  const unmatchedResponseMessages = responseMessageCounts(records);
+  const responseMessages = responseMessageOccurrences(records);
 
   for (const record of records) {
     const payload = objectValue(record.value.payload);
@@ -193,7 +230,8 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
         });
       } else if (
         payloadType === 'function_call_output' ||
-        payloadType === 'custom_tool_call_output'
+        payloadType === 'custom_tool_call_output' ||
+        payloadType === 'local_shell_call_output'
       ) {
         const callId = stringValue(payload.call_id);
         candidates.push({
@@ -222,19 +260,6 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
       continue;
     }
 
-    if (record.value.type === 'turn_context') {
-      const summary = stringValue(payload.summary);
-      if (summary !== undefined) {
-        candidates.push({
-          kind: 'context_note',
-          label: 'Codex compaction summary',
-          text: summary,
-          ...positionFor(0),
-        });
-      }
-      continue;
-    }
-
     if (record.value.type === 'event_msg') {
       const payloadType = stringValue(payload.type);
       if (
@@ -247,11 +272,14 @@ function codexCandidates(records: JsonlRecord[]): EventCandidate[] {
       if (message === undefined) continue;
       const role = payloadType === 'user_message' ? 'user' : 'assistant';
       const key = messageKey(role, message);
-      const duplicateCount = unmatchedResponseMessages.get(key) ?? 0;
-      if (duplicateCount > 0) {
-        unmatchedResponseMessages.set(key, duplicateCount - 1);
-        continue;
-      }
+      if (
+        matchesNearbyResponse(
+          responseMessages,
+          key,
+          record.position.record,
+          timestamp,
+        )
+      ) continue;
       candidates.push({
         kind: 'message',
         role,

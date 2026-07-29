@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import { readClaudeSession } from '../src/claude.js';
+import { SessionFormatError } from '../src/errors.js';
 import {
   CLAUDE_SESSION_ID,
   installClaudeFixture,
@@ -50,6 +53,27 @@ test('discovers and normalizes the active Claude branch', async () => {
         session.events[index - 1]?.event_id,
       );
     }
+  } finally {
+    await temporary.cleanup();
+  }
+});
+
+test('rejects a Claude transcript with no embedded session ID', async () => {
+  const temporary = await temporaryDirectory();
+  try {
+    const project = path.join(temporary.path, '-work-anima');
+    await mkdir(project, { recursive: true });
+    await writeFile(
+      path.join(project, `${CLAUDE_SESSION_ID}.jsonl`),
+      '{"type":"user","uuid":"u1","parentUuid":null,"cwd":"/work/anima","message":{"role":"user","content":"hello"}}\n',
+    );
+
+    await assert.rejects(
+      readClaudeSession(CLAUDE_SESSION_ID, {
+        projects_root: temporary.path,
+      }),
+      SessionFormatError,
+    );
   } finally {
     await temporary.cleanup();
   }
