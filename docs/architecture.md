@@ -569,6 +569,15 @@ black-box compatibility test covering:
 Because this uses an internal persistence format, the encoder is enabled only
 for tested Claude Code versions unless `--force-version` is supplied.
 
+The black-box compatibility result for Claude Code 2.1.220 is recorded in
+[`claude-transcript-compatibility.md`](claude-transcript-compatibility.md). A
+two-record, parent-linked transcript generated entirely offline resumed
+successfully, rendered both imported roles in the TUI, remained model-visible,
+accepted an appended turn, and stayed role-complete when read back through
+Anima. The versioned template is therefore compatible; the production encoder
+remains gated on the canonical archive, projection transaction, and atomic
+native writer.
+
 ## 13. Local storage
 
 The default data root is:

@@ -4,6 +4,14 @@ export {
   type ClaudeReaderOptions,
 } from './claude.js';
 export {
+  claudeProjectDirectoryName,
+  encodeClaudeTranscript,
+  SUPPORTED_CLAUDE_TRANSCRIPT_VERSION,
+  type ClaudeTranscriptMessage,
+  type EncodedClaudeTranscript,
+  type EncodeClaudeTranscriptOptions,
+} from './claude-transcript.js';
+export {
   findCodexSession,
   readCodexSession,
   type CodexReaderOptions,
