@@ -185,11 +185,12 @@ test('rejects timeout values that Node would silently clamp', async () => {
 
 test('makes the connection unusable after a request timeout', async () => {
   const temporary = await temporaryDirectory();
+  const requestTimeoutMs = 1_000;
   const client = await connectCodexAppServer({
     command: process.execPath,
     arguments: [FAKE_APP_SERVER, `${temporary.path}/requests.jsonl`],
     cwd: temporary.path,
-    request_timeout_ms: 100,
+    request_timeout_ms: requestTimeoutMs,
   });
   try {
     await assert.rejects(
@@ -197,7 +198,9 @@ test('makes the connection unusable after a request timeout', async () => {
       (error: unknown) =>
         error instanceof CodexAppServerRequestTimeoutError &&
         error.message.includes(
-          'timed out after 100ms; the connection is no longer safe to use',
+          `timed out after ${String(
+            requestTimeoutMs,
+          )}ms; the connection is no longer safe to use`,
         ),
     );
     await assert.rejects(
