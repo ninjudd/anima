@@ -248,6 +248,9 @@ export class CodexAppServerClient {
     child.stderr.on('data', (chunk: string) => {
       this.stderrBuffer = appendBoundedStderr(this.stderrBuffer, chunk);
     });
+    child.stdin.on('error', (error) => {
+      this.handleStdinError(error);
+    });
     child.once('error', (error) => {
       this.fail(
         new CodexAppServerError(
@@ -446,11 +449,7 @@ export class CodexAppServerClient {
     await new Promise<void>((resolve, reject) => {
       this.child.stdin.write(line, (error) => {
         if (error !== null && error !== undefined) {
-          reject(
-            new CodexAppServerError(
-              `Could not write to Codex AppServer: ${error.message}`,
-            ),
-          );
+          reject(this.handleStdinError(error));
           return;
         }
         resolve();
@@ -565,6 +564,14 @@ export class CodexAppServerClient {
       pending.reject(this.fatalError);
     }
     this.pending.clear();
+  }
+
+  private handleStdinError(error: Error): CodexAppServerError {
+    const failure = new CodexAppServerError(
+      `Could not write to Codex AppServer: ${error.message}`,
+    );
+    this.fail(failure);
+    return failure;
   }
 
   private async waitForTermination(): Promise<ExitResult | undefined> {

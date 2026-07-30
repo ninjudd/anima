@@ -324,3 +324,28 @@ test('bounds SIGTERM and SIGKILL shutdown escalation', async () => {
     await temporary.cleanup();
   }
 });
+
+test('handles child stdin errors without crashing the process', async () => {
+  const temporary = await temporaryDirectory();
+  const client = await connectCodexAppServer({
+    command: process.execPath,
+    arguments: [
+      FAKE_APP_SERVER,
+      `${temporary.path}/requests.jsonl`,
+      'close-stdin',
+    ],
+    cwd: temporary.path,
+    close_timeout_ms: 50,
+  });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await assert.rejects(
+      client.request('test/error'),
+      (error: unknown) => error instanceof CodexAppServerError,
+    );
+    await assert.rejects(client.request('test/error'), CodexAppServerError);
+  } finally {
+    await client.close().catch(() => undefined);
+    await temporary.cleanup();
+  }
+});

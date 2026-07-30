@@ -21,7 +21,10 @@ for await (const line of lines) {
   if (line.length === 0) continue;
   appendFileSync(logPath, `${line}\n`);
   const message = JSON.parse(line);
-  if (message.method === 'initialized') continue;
+  if (message.method === 'initialized') {
+    if (mode === 'close-stdin') process.stdin.destroy();
+    continue;
+  }
   if (message.method === undefined && message.error !== undefined) continue;
 
   if (message.method === 'initialize') {
@@ -109,4 +112,8 @@ if (mode === 'leak-stdout') {
 
 if (mode === 'ignore-sigterm') {
   await new Promise(() => undefined);
+}
+
+if (mode === 'close-stdin') {
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 }
