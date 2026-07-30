@@ -8,6 +8,19 @@ export {
   readCodexSession,
   type CodexReaderOptions,
 } from './codex.js';
+export {
+  CodexAppServerClient,
+  CodexInjectionError,
+  connectCodexAppServer,
+  injectCodexItems,
+  setCodexThreadName,
+  startPersistentCodexThread,
+  type CodexAppServerInfo,
+  type CodexAppServerOptions,
+  type CodexRawItem,
+  type CodexThreadReference,
+  type StartCodexThreadOptions,
+} from './codex-app-server.js';
 export { readJsonl } from './jsonl.js';
 export {
   CANONICAL_TOOL_OUTPUT_LIMIT,
