@@ -21,6 +21,12 @@ The Codex AppServer compatibility probe is documented in
 Codex CLI 0.146.0 durably preserves injected history for the model, but does not
 render imported items as prior turns in the interactive TUI.
 
+The Claude transcript compatibility probe is documented in
+[`docs/claude-transcript-compatibility.md`](docs/claude-transcript-compatibility.md).
+Claude Code 2.1.220 resumes the offline-generated template, renders both roles,
+includes them in the next model request, and appends a role-complete native
+chain.
+
 ## Development
 
 ```text
