@@ -43,7 +43,11 @@ test('creates, validates, records, and launches a Claude session', async () => {
   const temporary = await temporaryDirectory();
   try {
     const sessionsRoot = path.join(temporary.path, 'codex-sessions');
-    const projectsRoot = path.join(temporary.path, 'claude-projects');
+    const projectsRoot = path.join(
+      temporary.path,
+      'claude-config',
+      'projects',
+    );
     const dataRoot = path.join(temporary.path, 'anima-data');
     const workspace = path.join(temporary.path, 'workspace');
     await installCodexFixture(sessionsRoot);
@@ -56,7 +60,7 @@ test('creates, validates, records, and launches a Claude session', async () => {
       claude_projects_root: projectsRoot,
       data_root: dataRoot,
       cwd: workspace,
-      claude_command: fake.command,
+      claude_command: path.relative(process.cwd(), fake.command),
       status_writer: (text) => {
         status += text;
       },
@@ -67,9 +71,13 @@ test('creates, validates, records, and launches a Claude session', async () => {
     const launch = JSON.parse(await readFile(fake.launch_log, 'utf8')) as {
       args: string[];
       cwd: string;
+      claude_config_dir: string;
     };
     assert.deepEqual(launch.args, ['--resume', result.target_session_id]);
     assert.equal(launch.cwd, await realpath(workspace));
+    assert.equal(launch.claude_config_dir, path.dirname(projectsRoot));
+    assert.match(result.manual_resume_command, /CLAUDE_CONFIG_DIR=/);
+    assert.match(result.manual_resume_command, new RegExp(fake.command));
 
     const target = await readClaudeSession(result.target_session_id, {
       projects_root: projectsRoot,
@@ -121,7 +129,11 @@ test('archives canonical history but creates no target for an unknown Claude ver
   const temporary = await temporaryDirectory();
   try {
     const sessionsRoot = path.join(temporary.path, 'codex-sessions');
-    const projectsRoot = path.join(temporary.path, 'claude-projects');
+    const projectsRoot = path.join(
+      temporary.path,
+      'claude-config',
+      'projects',
+    );
     const dataRoot = path.join(temporary.path, 'anima-data');
     const workspace = path.join(temporary.path, 'workspace');
     await installCodexFixture(sessionsRoot);
@@ -163,7 +175,11 @@ test('regenerates a colliding Claude session ID without overwriting it', async (
   const temporary = await temporaryDirectory();
   try {
     const sessionsRoot = path.join(temporary.path, 'codex-sessions');
-    const projectsRoot = path.join(temporary.path, 'claude-projects');
+    const projectsRoot = path.join(
+      temporary.path,
+      'claude-config',
+      'projects',
+    );
     const dataRoot = path.join(temporary.path, 'anima-data');
     const workspace = path.join(temporary.path, 'workspace');
     await installCodexFixture(sessionsRoot);
@@ -202,7 +218,11 @@ test('retains the durable target and records launch failure', async () => {
   const temporary = await temporaryDirectory();
   try {
     const sessionsRoot = path.join(temporary.path, 'codex-sessions');
-    const projectsRoot = path.join(temporary.path, 'claude-projects');
+    const projectsRoot = path.join(
+      temporary.path,
+      'claude-config',
+      'projects',
+    );
     const dataRoot = path.join(temporary.path, 'anima-data');
     const workspace = path.join(temporary.path, 'workspace');
     await installCodexFixture(sessionsRoot);

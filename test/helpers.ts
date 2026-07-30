@@ -68,7 +68,11 @@ if (process.argv[2] === '--version') {
 if (process.argv[2] === '--resume' && process.argv[3] !== undefined) {
   await writeFile(
     ${JSON.stringify(launchLog)},
-    JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }),
+    JSON.stringify({
+      args: process.argv.slice(2),
+      cwd: process.cwd(),
+      claude_config_dir: process.env.CLAUDE_CONFIG_DIR,
+    }),
   );
   process.exit(${String(exitCode)});
 }

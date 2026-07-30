@@ -59,6 +59,11 @@ export interface CodexToClaudeTransferResult {
   manual_resume_command: string;
 }
 
+interface ClaudeTargetPaths {
+  config_root: string;
+  projects_root: string;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -75,18 +80,44 @@ function manualResumeCommand(
   command: string,
   sessionId: string,
   cwd: string,
+  configRoot: string,
 ): string {
-  return `cd ${shellQuote(cwd)} && ${shellQuote(command)} --resume ${shellQuote(sessionId)}`;
+  return `cd ${shellQuote(cwd)} && CLAUDE_CONFIG_DIR=${shellQuote(configRoot)} ${shellQuote(command)} --resume ${shellQuote(sessionId)}`;
 }
 
-function defaultClaudeProjectsRoot(): string {
-  const config = process.env.CLAUDE_CONFIG_DIR;
-  return path.join(
-    config !== undefined && config !== ''
-      ? config
+function claudeTargetPaths(projectsRoot: string | undefined): ClaudeTargetPaths {
+  if (projectsRoot !== undefined) {
+    const resolved = path.resolve(projectsRoot);
+    if (path.basename(resolved) !== 'projects') {
+      throw new TransferError(
+        `Claude projects root ${projectsRoot} cannot be used for launch; it must end in /projects so Claude can address it through CLAUDE_CONFIG_DIR.`,
+      );
+    }
+    return {
+      config_root: path.dirname(resolved),
+      projects_root: resolved,
+    };
+  }
+
+  const configured = process.env.CLAUDE_CONFIG_DIR;
+  const configRoot = path.resolve(
+    configured !== undefined && configured !== ''
+      ? configured
       : path.join(homedir(), '.claude'),
-    'projects',
   );
+  return {
+    config_root: configRoot,
+    projects_root: path.join(configRoot, 'projects'),
+  };
+}
+
+function resolveClaudeCommand(command: string): string {
+  if (command === '') {
+    throw new TransferError('Claude executable must not be empty.');
+  }
+  return path.isAbsolute(command) || !command.includes(path.sep)
+    ? command
+    : path.resolve(command);
 }
 
 async function resolveTargetCwd(value: string): Promise<string> {
@@ -111,6 +142,7 @@ async function resolveTargetCwd(value: string): Promise<string> {
 
 export async function detectClaudeVersion(
   command = 'claude',
+  environment: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
   let output: string;
   try {
@@ -118,6 +150,7 @@ export async function detectClaudeVersion(
       encoding: 'utf8',
       timeout: 10_000,
       maxBuffer: 64 * 1024,
+      env: environment,
     });
     output = result.stdout;
   } catch (error) {
@@ -259,11 +292,16 @@ async function launchClaude(
   command: string,
   sessionId: string,
   cwd: string,
+  configRoot: string,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, ['--resume', sessionId], {
       cwd,
       stdio: 'inherit',
+      env: {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: configRoot,
+      },
     });
     child.once('error', (error) => {
       reject(
@@ -308,9 +346,10 @@ export async function transferCodexToClaude(
 ): Promise<CodexToClaudeTransferResult> {
   const now = options.now ?? (() => new Date());
   const dataRoot = options.data_root ?? defaultAnimaDataRoot();
-  const projectsRoot =
-    options.claude_projects_root ?? defaultClaudeProjectsRoot();
-  const claudeCommand = options.claude_command ?? 'claude';
+  const claudePaths = claudeTargetPaths(options.claude_projects_root);
+  const claudeCommand = resolveClaudeCommand(
+    options.claude_command ?? 'claude',
+  );
   const sessionIdFactory = options.session_id_factory ?? randomUUID;
   const writeStatus =
     options.status_writer ?? ((value: string) => process.stdout.write(value));
@@ -342,7 +381,14 @@ export async function transferCodexToClaude(
     await updateTransferRecord(dataRoot, transfer);
 
     const cwd = await resolveTargetCwd(options.cwd ?? source.cwd);
-    const version = await detectClaudeVersion(claudeCommand);
+    const claudeEnvironment = {
+      ...process.env,
+      CLAUDE_CONFIG_DIR: claudePaths.config_root,
+    };
+    const version = await detectClaudeVersion(
+      claudeCommand,
+      claudeEnvironment,
+    );
     verifyClaudeVersion(version);
     const messages = projectClaudeMessages(source, {
       ...(options.include_tool_output === true
@@ -356,7 +402,7 @@ export async function transferCodexToClaude(
     }
 
     const selected = await chooseTranscript(
-      projectsRoot,
+      claudePaths.projects_root,
       cwd,
       version,
       messages,
@@ -367,6 +413,7 @@ export async function transferCodexToClaude(
       claudeCommand,
       selected.encoded.session_id,
       cwd,
+      claudePaths.config_root,
     );
     transfer = withState(transfer, 'target_created', now, {
       target: {
@@ -386,7 +433,7 @@ export async function transferCodexToClaude(
     );
     await validateInstalledTranscript(
       selected.encoded,
-      projectsRoot,
+      claudePaths.projects_root,
       messages,
       cwd,
       version,
@@ -429,7 +476,12 @@ export async function transferCodexToClaude(
     transfer = withState(transfer, 'launching', now);
     await updateTransferRecord(dataRoot, transfer);
     try {
-      await launchClaude(claudeCommand, selected.encoded.session_id, cwd);
+      await launchClaude(
+        claudeCommand,
+        selected.encoded.session_id,
+        cwd,
+        claudePaths.config_root,
+      );
     } catch (error) {
       transfer = withState(transfer, 'launch_failed', now, {
         error: {

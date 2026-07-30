@@ -8,7 +8,7 @@ import {
   rename,
   unlink,
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -22,6 +22,8 @@ import type {
 } from './types.js';
 
 const STORE_SCHEMA_VERSION = '1\n';
+const LINEAGE_LOCK_RETRY_MS = 25;
+const LINEAGE_LOCK_TIMEOUT_MS = 10_000;
 
 export type TransferState =
   | 'reading'
@@ -121,6 +123,56 @@ async function fsyncDirectory(directory: string): Promise<void> {
     await handle.sync();
   } finally {
     await handle.close();
+  }
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+async function acquireLineageLock(
+  directory: string,
+): Promise<() => Promise<void>> {
+  const filename = path.join(directory, '.archive.lock');
+  const deadline = Date.now() + LINEAGE_LOCK_TIMEOUT_MS;
+
+  while (true) {
+    try {
+      const handle = await open(filename, 'wx', 0o600);
+      try {
+        await handle.writeFile(
+          `${JSON.stringify({
+            pid: process.pid,
+            hostname: hostname(),
+            acquired_at: new Date().toISOString(),
+          })}\n`,
+          'utf8',
+        );
+        await handle.sync();
+      } catch (error) {
+        await handle.close();
+        await unlink(filename).catch(() => undefined);
+        throw error;
+      }
+
+      return async () => {
+        await handle.close();
+        await unlink(filename).catch((error: unknown) => {
+          if (!isErrno(error, 'ENOENT')) throw error;
+        });
+        await fsyncDirectory(directory);
+      };
+    } catch (error) {
+      if (!isErrno(error, 'EEXIST')) throw error;
+      if (Date.now() >= deadline) {
+        throw new StorageError(
+          `Timed out waiting for canonical archive lock ${filename}; if no Anima transfer is running, inspect and remove that lock file before retrying.`,
+        );
+      }
+      await wait(LINEAGE_LOCK_RETRY_MS);
+    }
   }
 }
 
@@ -261,43 +313,48 @@ export async function commitCanonicalSession(
   await ensurePrivateDirectory(directory);
   const eventsPath = path.join(directory, 'events.jsonl');
   const manifestPath = path.join(directory, 'manifest.json');
-  const eventsJsonl = `${session.events
-    .map((event) => JSON.stringify(event))
-    .join('\n')}${session.events.length === 0 ? '' : '\n'}`;
-  const existingText = await readIfExists(eventsPath);
-  if (existingText !== undefined) {
-    assertExistingPrefix(
-      eventsPath,
-      parseEventStream(eventsPath, existingText),
-      session.events,
-    );
-  }
-  if (existingText !== eventsJsonl) {
-    await writeFileAtomic(eventsPath, eventsJsonl);
-  }
+  const release = await acquireLineageLock(directory);
+  try {
+    const eventsJsonl = `${session.events
+      .map((event) => JSON.stringify(event))
+      .join('\n')}${session.events.length === 0 ? '' : '\n'}`;
+    const existingText = await readIfExists(eventsPath);
+    if (existingText !== undefined) {
+      assertExistingPrefix(
+        eventsPath,
+        parseEventStream(eventsPath, existingText),
+        session.events,
+      );
+    }
+    if (existingText !== eventsJsonl) {
+      await writeFileAtomic(eventsPath, eventsJsonl);
+    }
 
-  const manifest: LineageManifest = {
-    schema_version: 1,
-    lineage_id: session.lineage_id,
-    source: {
-      provider: session.provider,
-      native_session_id: session.session_id,
-      native_log_path: session.native_path,
-      cwd: session.cwd,
-      ...(session.cli_version !== undefined
-        ? { cli_version: session.cli_version }
-        : {}),
-    },
-    ...(session.title !== undefined ? { title: session.title } : {}),
-    warnings: session.warnings,
-    canonical_event_count: session.events.length,
-    canonical_head_event_id: session.events.at(-1)?.event_id ?? null,
-    updated_at: updatedAt,
-  };
-  await writeFileAtomic(
-    manifestPath,
-    `${JSON.stringify(manifest, null, 2)}\n`,
-  );
+    const manifest: LineageManifest = {
+      schema_version: 1,
+      lineage_id: session.lineage_id,
+      source: {
+        provider: session.provider,
+        native_session_id: session.session_id,
+        native_log_path: session.native_path,
+        cwd: session.cwd,
+        ...(session.cli_version !== undefined
+          ? { cli_version: session.cli_version }
+          : {}),
+      },
+      ...(session.title !== undefined ? { title: session.title } : {}),
+      warnings: session.warnings,
+      canonical_event_count: session.events.length,
+      canonical_head_event_id: session.events.at(-1)?.event_id ?? null,
+      updated_at: updatedAt,
+    };
+    await writeFileAtomic(
+      manifestPath,
+      `${JSON.stringify(manifest, null, 2)}\n`,
+    );
+  } finally {
+    await release();
+  }
   return { manifest_path: manifestPath, events_path: eventsPath };
 }
 

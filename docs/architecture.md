@@ -612,6 +612,13 @@ content must never be written to a system-wide shared temporary directory.
 append-only canonical event stream. Projection lookup files make provider and
 session ID resolution direct.
 
+Canonical stream validation and replacement are serialized per lineage with an
+owner-only lock file. This prevents a shorter snapshot of an actively growing
+source from racing a longer snapshot and regressing either `events.jsonl` or
+its manifest. Lock waits are bounded; after a crash, Anima reports the retained
+lock for explicit inspection instead of guessing that an active writer is
+stale.
+
 ## 14. Transfer transaction
 
 Each invocation creates a durable transfer record with these states:

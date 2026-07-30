@@ -66,7 +66,11 @@ test('transfers a Codex session to Claude and launches the new session', async (
   const temporary = await temporaryDirectory();
   try {
     const sessionsRoot = path.join(temporary.path, 'codex-sessions');
-    const projectsRoot = path.join(temporary.path, 'claude-projects');
+    const projectsRoot = path.join(
+      temporary.path,
+      'claude-config',
+      'projects',
+    );
     const dataRoot = path.join(temporary.path, 'anima-data');
     const workspace = path.join(temporary.path, 'workspace');
     await installCodexFixture(sessionsRoot);
@@ -94,9 +98,11 @@ test('transfers a Codex session to Claude and launches the new session', async (
     const launch = JSON.parse(await readFile(fake.launch_log, 'utf8')) as {
       args: string[];
       cwd: string;
+      claude_config_dir: string;
     };
     assert.deepEqual(launch.args, ['--resume', targetId]);
     assert.equal(launch.cwd, await realpath(workspace));
+    assert.equal(launch.claude_config_dir, path.dirname(projectsRoot));
   } finally {
     await temporary.cleanup();
   }

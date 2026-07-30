@@ -21,7 +21,7 @@ Options:
   -h, --help             Show this help
 
 Environment:
-  ANIMA_CLAUDE_PROJECTS_DIR  Override ~/.claude/projects
+  ANIMA_CLAUDE_PROJECTS_DIR  Override Claude's projects root (must end /projects)
   ANIMA_CODEX_SESSIONS_DIR   Override ~/.codex/sessions
   ANIMA_DATA_DIR             Override ~/.local/share/anima
   ANIMA_CLAUDE_COMMAND       Override the target Claude executable

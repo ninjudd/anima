@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { readCodexSession } from '../src/codex.js';
 import { StorageError } from '../src/errors.js';
@@ -70,6 +72,86 @@ test('exclusive publishing never replaces an existing file', async () => {
       StorageError,
     );
     assert.equal(await readFile(filename, 'utf8'), 'first\n');
+  } finally {
+    await temporary.cleanup();
+  }
+});
+
+test('serializes lineage archive validation and publication', async () => {
+  const temporary = await temporaryDirectory();
+  try {
+    const sessionsRoot = path.join(temporary.path, 'codex-sessions');
+    const dataRoot = path.join(temporary.path, 'data');
+    await installCodexFixture(sessionsRoot);
+    const session = await readCodexSession(CODEX_SESSION_ID, {
+      sessions_root: sessionsRoot,
+    });
+    const archive = await commitCanonicalSession(
+      dataRoot,
+      session,
+      '2026-07-29T20:00:00.000Z',
+    );
+    const last = session.events.at(-1);
+    assert(last !== undefined);
+    const longer = {
+      ...session,
+      events: [
+        ...session.events,
+        {
+          ...last,
+          event_id: 'evt_concurrent_append',
+          parent_event_id: last.event_id,
+          origin: {
+            ...last.origin,
+            native_position: {
+              record: last.origin.native_position.record + 1,
+              block: 0,
+            },
+          },
+        },
+      ],
+    };
+    const lockPath = path.join(
+      path.dirname(archive.events_path),
+      '.archive.lock',
+    );
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({
+        pid: process.pid,
+        hostname: hostname(),
+        acquired_at: new Date().toISOString(),
+      })}\n`,
+      { mode: 0o600 },
+    );
+
+    let settled = false;
+    const pending = commitCanonicalSession(
+      dataRoot,
+      longer,
+      '2026-07-29T20:00:01.000Z',
+    ).finally(() => {
+      settled = true;
+    });
+    await delay(75);
+    assert.equal(settled, false);
+    await unlink(lockPath);
+    await pending;
+
+    assert.equal(
+      (await readFile(archive.events_path, 'utf8')).trim().split('\n').length,
+      longer.events.length,
+    );
+    await assert.rejects(
+      commitCanonicalSession(
+        dataRoot,
+        session,
+        '2026-07-29T20:00:02.000Z',
+      ),
+      (error: unknown) =>
+        error instanceof StorageError &&
+        error.message.includes('ahead of the source session'),
+    );
   } finally {
     await temporary.cleanup();
   }
