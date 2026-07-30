@@ -574,9 +574,10 @@ The black-box compatibility result for Claude Code 2.1.220 is recorded in
 two-record, parent-linked transcript generated entirely offline resumed
 successfully, rendered both imported roles in the TUI, remained model-visible,
 accepted an appended turn, and stayed role-complete when read back through
-Anima. The versioned template is therefore compatible; the production encoder
-remains gated on the canonical archive, projection transaction, and atomic
-native writer.
+Anima. The versioned template is therefore compatible. The production
+Codex-to-Claude path now supplies the canonical archive, projection transaction,
+exclusive atomic native writer, read-back validation, and inherited-terminal
+launcher around that template.
 
 ## 13. Local storage
 
@@ -837,7 +838,7 @@ No model API SDK is required.
 - Verify rollout durability.
 - Launch the new thread with `codex resume`.
 
-### Phase 3: Codex to Claude
+### Phase 3: Codex to Claude (implemented for Claude Code 2.1.220)
 
 - Build the versioned Claude transcript encoder.
 - Validate generated parent chains.
