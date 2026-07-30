@@ -1,4 +1,11 @@
-import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -36,4 +43,43 @@ export async function installCodexFixture(root: string): Promise<string> {
   );
   await copyFile(path.resolve('test/fixtures/codex/basic.jsonl'), destination);
   return destination;
+}
+
+export async function installFakeClaude(
+  root: string,
+  options: {
+    version?: string;
+    exit_code?: number;
+  } = {},
+): Promise<{ command: string; launch_log: string }> {
+  const command = path.join(root, 'fake-claude.mjs');
+  const launchLog = path.join(root, 'fake-claude-launch.json');
+  const version = options.version ?? '2.1.220';
+  const exitCode = options.exit_code ?? 0;
+  await writeFile(
+    command,
+    `#!/usr/bin/env node
+import { writeFile } from 'node:fs/promises';
+
+if (process.argv[2] === '--version') {
+  process.stdout.write(${JSON.stringify(`${version}\n`)});
+  process.exit(0);
+}
+if (process.argv[2] === '--resume' && process.argv[3] !== undefined) {
+  await writeFile(
+    ${JSON.stringify(launchLog)},
+    JSON.stringify({
+      args: process.argv.slice(2),
+      cwd: process.cwd(),
+      claude_config_dir: process.env.CLAUDE_CONFIG_DIR,
+    }),
+  );
+  process.exit(${String(exitCode)});
+}
+process.exit(64);
+`,
+    { mode: 0o700 },
+  );
+  await chmod(command, 0o700);
+  return { command, launch_log: launchLog };
 }

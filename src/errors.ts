@@ -15,6 +15,12 @@ export class SessionFormatError extends AnimaError {}
 
 export class ClaudeTranscriptError extends AnimaError {}
 
+export class ClaudeLaunchError extends AnimaError {}
+
+export class StorageError extends AnimaError {}
+
+export class TransferError extends AnimaError {}
+
 export class CodexAppServerError extends AnimaError {}
 
 export class CodexAppServerRequestTimeoutError extends CodexAppServerError {}
