@@ -29,6 +29,8 @@ async function runClaude(
   arguments_: string[],
   cwd: string,
   env: NodeJS.ProcessEnv,
+  signal: AbortSignal,
+  timeoutMs: number,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, arguments_, {
@@ -39,18 +41,40 @@ async function runClaude(
     let stdout = '';
     let stderr = '';
     let settled = false;
-    const fail = (error: Error) => {
-      if (settled) return;
-      settled = true;
+    let terminalError: Error | undefined;
+    const terminate = (error: Error) => {
+      if (settled || terminalError !== undefined) return;
+      terminalError = error;
       child.kill('SIGKILL');
-      reject(error);
+      child.stdout.destroy();
+      child.stderr.destroy();
     };
     const append = (current: string, chunk: string): string => {
       const next = current + chunk;
       if (Buffer.byteLength(next, 'utf8') > OUTPUT_LIMIT) {
-        fail(new Error('Claude integration output exceeded 1 MiB.'));
+        terminate(new Error('Claude integration output exceeded 1 MiB.'));
       }
       return next;
+    };
+    const handleAbort = () => {
+      terminate(new Error('Claude integration was aborted.'));
+    };
+    const timer = setTimeout(() => {
+      terminate(
+        new Error(
+          `Claude integration timed out after ${String(timeoutMs)}ms.`,
+        ),
+      );
+    }, timeoutMs);
+    timer.unref();
+    if (signal.aborted) {
+      handleAbort();
+    } else {
+      signal.addEventListener('abort', handleAbort, { once: true });
+    }
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', handleAbort);
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -60,10 +84,20 @@ async function runClaude(
     child.stderr.on('data', (chunk: string) => {
       stderr = append(stderr, chunk);
     });
-    child.once('error', fail);
-    child.once('close', (code, signal) => {
+    child.once('error', (error) => {
       if (settled) return;
       settled = true;
+      cleanup();
+      reject(error);
+    });
+    child.once('close', (code, exitSignal) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (terminalError !== undefined) {
+        reject(terminalError);
+        return;
+      }
       if (code === 0) {
         resolve(stdout);
         return;
@@ -71,7 +105,9 @@ async function runClaude(
       reject(
         new Error(
           `Claude exited with ${
-            signal === null ? `status ${String(code)}` : `signal ${signal}`
+            exitSignal === null
+              ? `status ${String(code)}`
+              : `signal ${exitSignal}`
           }: ${stderr.trim()}`,
         ),
       );
@@ -79,10 +115,26 @@ async function runClaude(
   });
 }
 
+test('terminates a hung integration child at its deadline', async () => {
+  const startedAt = Date.now();
+  await assert.rejects(
+    runClaude(
+      process.execPath,
+      ['-e', 'setInterval(() => undefined, 1000)'],
+      process.cwd(),
+      process.env,
+      new AbortController().signal,
+      50,
+    ),
+    /timed out after 50ms/,
+  );
+  assert.equal(Date.now() - startedAt < 1_000, true);
+});
+
 test(
   'resumes an offline-generated Claude transcript',
   { skip: !enabled, timeout: 60_000 },
-  async () => {
+  async (context) => {
     const root = await mkdtemp(
       path.join(tmpdir(), 'anima-claude-integration-'),
     );
@@ -99,7 +151,7 @@ test(
       const { stdout: versionOutput } = await execFileAsync(
         command,
         ['--version'],
-        { cwd },
+        { cwd, signal: context.signal },
       );
       const version = versionOutput.trim().split(' ')[0];
       assert.equal(version, SUPPORTED_CLAUDE_TRANSCRIPT_VERSION);
@@ -129,6 +181,8 @@ test(
       );
 
       const expected = `${userText}|${assistantText}`;
+      const verificationPrompt =
+        'Reply with the exact text of the two conversation messages immediately before this one, oldest first, joined by a single |, and nothing else.';
       const stdout = await runClaude(
         command,
         [
@@ -142,13 +196,15 @@ test(
           'json',
           '--max-budget-usd',
           '0.10',
-          `Reply with exactly ${expected}, using the two messages immediately before this one.`,
+          verificationPrompt,
         ],
         cwd,
         {
           ...process.env,
           CLAUDE_CONFIG_DIR: configRoot,
         },
+        context.signal,
+        45_000,
       );
       const resultLine = stdout
         .trim()
@@ -174,10 +230,7 @@ test(
         [
           { role: 'user', text: userText },
           { role: 'assistant', text: assistantText },
-          {
-            role: 'user',
-            text: `Reply with exactly ${expected}, using the two messages immediately before this one.`,
-          },
+          { role: 'user', text: verificationPrompt },
           { role: 'assistant', text: expected },
         ],
       );

@@ -63,7 +63,8 @@ Pass:
 2. Run `claude --resume <session-uuid>` in the recorded working directory.
 3. Confirm the interactive TUI renders both imported messages in their original
    roles and order.
-4. Ask the next model turn to return the two imported sentinel values.
+4. Ask the next model turn to return the two prior messages without including
+   either sentinel value in the verification prompt.
 5. Confirm it returns both values exactly.
 6. Read the appended transcript through `readClaudeSession`.
 7. Confirm imported and new messages remain role-complete and parent-linked.
